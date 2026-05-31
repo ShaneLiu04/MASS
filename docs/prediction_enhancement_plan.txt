@@ -1,0 +1,210 @@
+================================================================================
+MASS v2.3 预测引擎性能与可调性增强方案
+================================================================================
+
+一、现状诊断
+────────────────────────────────────────────────────────────────
+
+1.1 当前预测引擎 (agent/core/prediction_engine.py) 的问题：
+
+【P0 - 性能瓶颈】
+  A. 系统提示词硬编码：SYSTEM_PROMPT 写在 Python 源码中（323行），无法热更新，
+     每次修改需重启服务
+  B. Prompt 冗余臃肿：_build_prediction_prompt() 将 StockSnapshot 的全部数据
+     （K线摘要、技术指标 44项、基本面、资金流向、情绪、宏观、风险指标）全部塞入，
+     Token 消耗 ≈ 3000-6000 tokens/次，LLM 处理时间线性增长
+  C. 无 prompt 缓存复用：同一只股票在 close 价格变动前，snapshot 数据几乎不变，
+     但仍每次完整构建
+
+【P1 - 参数不足】
+  D. 无风险偏好调节：当前只有 horizon(short/medium/long)，缺少 risk_tolerance
+     (conservative/moderate/aggressive) 和 investment_style(swing/trend/value)
+  E. 无置信度校准：LLM 返回的 confidence 未经数据质量修正，数据源缺失多时
+     仍可能输出高置信度
+  F. 无多模型 ensemble：仅单次 LLM 调用，无主/备模型切换、无投票融合
+
+【P2 - 数据质量】
+  G. 数据缺失时仍发完整 prompt：当 fund_flow 或 sentiment 为空时，仍包含
+     "数据不可用" 的无效字段，浪费 tokens
+  H. 无预测精度追踪：PredictionResult 未落库，无法回溯验证历史准确率
+
+1.2 调用链度量（单次 predict 请求）：
+  API → snapshot 创建 (2-5s) → prompt 构建 (5ms) → LLM 调用 (3-8s) → 解析 (1ms)
+  总耗时 ≈ 5-13s，其中 LLM 调用占 60-70%
+
+
+二、改造方案
+────────────────────────────────────────────────────────────────
+
+2.1 Prompt 工程重构（解决 A, B, C）
+
+  [A] 系统提示词文件化
+      新建 agent/prompts/system/prediction.md，与 agent prompt 同级，
+      PredictionEngine 启动时从文件加载，支持热更新。
+      回退策略：文件缺失时使用内嵌 DEFAULT_SYSTEM_PROMPT
+
+  [B] 分层 Prompt 策略（核心优化）
+      将当前"全部塞入"改为按预测周期分层裁剪：
+
+      ┌──────────┬──────────────────────────────────────────┐
+      │ 预测周期  │ Prompt 包含的数据                         │
+      ├──────────┼──────────────────────────────────────────┤
+      │ short    │ K线(10日) + 技术指标 + 资金流向 + 情绪    │
+      │ (1-5日)  │ ≈ 1500-2500 tokens                      │
+      ├──────────┼──────────────────────────────────────────┤
+      │ medium   │ K线(30日) + 技术指标 + 资金 + 基本面 + 情绪│
+      │ (1-4周)  │ ≈ 2000-3500 tokens                      │
+      ├──────────┼──────────────────────────────────────────┤
+      │ long     │ K线(120日) + 技术指标 + 基本面 + 宏观      │
+      │ (1-3月)  │ ≈ 2500-4000 tokens                      │
+      └──────────┴──────────────────────────────────────────┘
+
+      与现状 (3000-6000 tokens) 相比，减 30-50% token 消耗
+
+  [C] Prompt 构建结果缓存
+      复用 StockSnapshot._prompt_context_cache 模式：
+      对 snapshot 的指标/基本面等结构化字段生成一次，不同预测请求复用
+
+2.2 新增可调参数（解决 D, E, F）
+
+  [D] PredictionRequest 新参数：
+
+      risk_tolerance: str = "moderate"
+        - "conservative": 偏向风险规避，升高下跌概率权重，目标价区间收窄
+        - "moderate":    平衡风险收益（当前行为）
+        - "aggressive":  偏向收益追逐，允许更高波动，目标价区间放宽
+
+      investment_style: str = "swing"
+        - "swing":   波段交易，侧重技术面和资金面
+        - "trend":   趋势跟踪，侧重均线和宏观周期
+        - "value":   价值投资，侧重基本面和估值
+
+      confidence_threshold: float = 0.6
+        - 低于此阈值的预测自动降级为 "不确定"
+        - 范围 0.4-0.8，防止过度自信
+
+      These parameters are injected into the system prompt as conditional
+      instructions, steering the LLM's analysis without changing the output schema.
+
+  [E] 数据质量加权置信度
+      预测完成后，根据 data_quality 报告调整 confidence：
+
+      adjusted_confidence = raw_confidence × data_completeness × (1 - missing_critical_ratio)
+
+      其中 data_completeness 来自 StockSnapshot.data_quality 的字段覆盖率
+
+  [F] 多模型 fallback
+      配置 PRIMARY_PREDICTION_MODEL + FALLBACK_PREDICTION_MODEL
+      主模型 3 次重试失败后自动切换备模型（如 deepseek → gpt-4o）
+
+2.3 Prompt 模板设计（核心产出）
+
+  系统提示词 (agent/prompts/system/prediction.md)：
+  - 角色定义：量化投资分析师
+  - 分析框架：技术/资金/情绪/基本面/宏观 5 维
+  - 预测原则：概率化、量化目标价、风险前置、推理透明
+  - 动态注入段：
+    ● {RISK_TOLERANCE_SECTION} — 根据 risk_tolerance 注入不同指令
+    ● {INVESTMENT_STYLE_SECTION} — 根据 investment_style 注入分析侧重
+    ● {CONFIDENCE_THRESHOLD_SECTION} — 根据 confidence_threshold 注入校验规则
+
+  用户提示词 (动态构建)：
+  - # 股票预测任务（股票代码、名称、周期、当前价）
+  - ## 技术面（K线摘要 + 关键指标，按 horizon 裁剪）
+  - ## 资金面（如有）
+  - ## 基本面（medium/long 时包含）
+  - ## 市场情绪（short/medium 时包含）
+  - ## 宏观环境（long 时包含）
+  - ## 风险指标
+  - ## 要求（JSON 输出格式）
+
+2.4 输出增强
+
+  PredictionResult 新增字段：
+  - stop_loss: Optional[float]           # 建议止损价
+  - risk_reward_ratio: Optional[float]   # 风险收益比
+  - holding_period_days: Optional[int]   # 建议持有天数
+  - confidence_calibrated: float         # 数据质量校准后的置信度
+  - data_quality_factor: float           # 校准因子
+  - prompt_tokens_used: Optional[int]    # 性能度量
+
+2.5 API 层改造
+
+  /api/agent/predict 新增请求参数：
+  {
+    "stock_code": "600000",
+    "horizon": "short",              // 不变
+    "risk_tolerance": "moderate",    // 新增：conservative/moderate/aggressive
+    "investment_style": "swing",     // 新增：swing/trend/value
+    "confidence_threshold": 0.6,     // 新增：0.4-0.8
+    "force_refresh": false,          // 已有
+    "model_params": {                // 已有
+      "temperature": 0.3,
+      "top_p": 0.9,
+      "max_tokens": 4096
+    }
+  }
+
+  新增 /api/agent/predict/stream（SSE 流式预测）：
+  - 与 diagnose/stream 相同架构：后台线程池 + Queue 解耦
+  - 进度事件：snapshot → prompt_built → llm_calling → parsing → result
+  - 缓存命中时直接推送 result 事件
+
+2.6 预测精度追踪
+
+  新增 agent_accuracy 表字段或在 validation_records 中记录：
+  - predicted_direction vs actual_direction (N日后验证)
+  - confidence_error (预测置信度 - 实际准确率)
+
+
+三、实施计划（分阶段）
+────────────────────────────────────────────────────────────────
+
+Phase 1 (立即) — 性能优先
+  1.1 系统提示词文件化 → agent/prompts/system/prediction.md
+  1.2 分层 Prompt 策略 → 按 horizon 裁剪数据
+  1.3 Prompt 构建缓存 → 复用快照缓存
+  预期：Token 减少 30-50%，LLM 调用耗时减少 20-30%
+
+Phase 2 (本迭代) — 参数增强
+  2.1 PredictionResult 新增字段 (stop_loss, risk_reward_ratio, confidence_calibrated)
+  2.2 新增 risk_tolerance / investment_style / confidence_threshold 参数
+  2.3 数据质量置信度校准
+  2.4 多模型 fallback
+  预期：预测可调性大幅提升，高缺失数据时 confidence 自动降低
+
+Phase 3 (后续) — 流式 + 追踪
+  3.1 SSE 流式预测端点
+  3.2 预测精度历史追踪
+  3.3 前端预测面板 UI
+  预期：预测体验与诊断对齐，回溯验证能力
+
+
+四、配置项汇总
+────────────────────────────────────────────────────────────────
+
+# .env 新增配置
+PREDICTION_MODEL=deepseek-v4-pro          # 已有
+FALLBACK_PREDICTION_MODEL=gpt-4o          # 新增：备用模型
+PREDICTION_PROMPT_FILE=agent/prompts/system/prediction.md  # 新增
+PREDICTION_CONFIDENCE_THRESHOLD=0.6       # 新增：全局默认阈值
+PREDICTION_CACHE_TTL=300                  # 新增：预测缓存秒数
+
+
+五、验证指标
+────────────────────────────────────────────────────────────────
+
+  性能：
+  - Token 消耗减少 30%+（通过分层 prompt）
+  - LLM 调用耗时减少 20%+（token 减少 + multi-model fallback）
+  - 缓存命中响应 < 50ms
+
+  可调性：
+  - 支持 3 种 risk_tolerance × 3 种 investment_style = 9 种分析模式
+  - 置信度自动校准，数据缺失场景 confidence 合理下降
+  - 主模型故障时自动切换备模型
+
+  兼容性：
+  - 现有 API 参数向后兼容（新参数有默认值）
+  - 现有测试全部通过
+  - PredictionResult 新增字段为 Optional，旧客户端不受影响

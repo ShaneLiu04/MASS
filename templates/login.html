@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/mass-logo.svg') }}">
+    <title>MASS - 登录</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/mass-theme.css') }}">
+    <style>
+        .login-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .login-bg {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(ellipse at 20% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+                        radial-gradient(ellipse at 80% 80%, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
+                        radial-gradient(ellipse at 50% 50%, rgba(6, 182, 212, 0.04) 0%, transparent 60%),
+                        var(--bg-base);
+        }
+        .login-bg::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+        }
+        .login-container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 440px;
+            padding: 0 20px;
+        }
+        .login-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-xl);
+            backdrop-filter: blur(20px);
+            padding: 48px 40px;
+            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(100, 130, 200, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), var(--accent-cyan));
+        }
+        .login-logo {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .login-logo-icon {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            border-radius: var(--radius-lg);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 700;
+            color: white;
+            box-shadow: 0 8px 32px rgba(59, 130, 246, 0.35);
+            margin-bottom: 16px;
+        }
+        .login-logo h1 {
+            font-size: var(--font-size-2xl);
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 0;
+            letter-spacing: 2px;
+        }
+        .login-logo p {
+            font-size: var(--font-size-sm);
+            color: var(--text-muted);
+            margin: 8px 0 0;
+            letter-spacing: 1px;
+        }
+        .login-form-group {
+            margin-bottom: 20px;
+        }
+        .login-form-group label {
+            display: block;
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        .login-input {
+            width: 100%;
+            padding: 14px 16px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: var(--font-size-base);
+            font-family: var(--font-sans);
+            transition: all var(--transition-fast);
+        }
+        .login-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+        .login-btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: var(--font-size-base);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            font-family: var(--font-sans);
+            margin-bottom: 12px;
+        }
+        .login-btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue), #2563eb);
+            color: white;
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+        }
+        .login-btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px rgba(59, 130, 246, 0.4);
+        }
+        .login-btn-admin {
+            background: linear-gradient(135deg, #7c3aed, #a855f7);
+            color: white;
+            box-shadow: 0 4px 16px rgba(168, 85, 247, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .login-btn-admin:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px rgba(168, 85, 247, 0.4);
+        }
+        .login-divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 20px 0;
+            color: var(--text-muted);
+            font-size: var(--font-size-xs);
+        }
+        .login-divider::before,
+        .login-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border-medium);
+        }
+        .login-error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            font-size: var(--font-size-sm);
+            margin-bottom: 20px;
+            display: none;
+        }
+        .login-error.show {
+            display: block;
+        }
+        .login-footer {
+            text-align: center;
+            margin-top: 24px;
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+        }
+        .floating-particles {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .particle {
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            background: var(--accent-blue);
+            border-radius: 50%;
+            opacity: 0.3;
+            animation: float-up 15s infinite linear;
+        }
+        @keyframes float-up {
+            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 0.3; }
+            90% { opacity: 0.3; }
+            100% { transform: translateY(-100px) rotate(720deg); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-bg"></div>
+    <div class="floating-particles" id="particles"></div>
+
+    <div class="login-page">
+        <div class="login-container">
+            <div class="login-card">
+                <div class="login-logo">
+                    <img src="{{ url_for('static', filename='img/mass-logo.svg') }}" alt="MASS" style="width:72px; height:72px; margin-bottom:8px;">
+                    <h1>MASS</h1>
+                    <p>多智能体协同股票投研与决策系统</p>
+                </div>
+
+                <div class="login-error" id="errorMsg"></div>
+
+                <form id="loginForm" onsubmit="handleLogin(event)">
+                    <div class="login-form-group">
+                        <label for="username">用户名</label>
+                        <input type="text" id="username" class="login-input" placeholder="请输入用户名" value="">
+                    </div>
+                    <div class="login-form-group">
+                        <label for="password">密码</label>
+                        <input type="password" id="password" class="login-input" placeholder="请输入密码" value="">
+                    </div>
+                    <button type="submit" class="login-btn login-btn-primary">登录</button>
+                </form>
+
+                <div class="login-divider">快捷登录</div>
+
+                <button class="login-btn login-btn-admin" onclick="adminLogin()">
+                    <i class="bi bi-shield-lock" style="margin-right:6px"></i>管理员一键登录
+                </button>
+                <button class="login-btn login-btn-admin" style="background: linear-gradient(135deg, #0891b2, #06b6d4);" onclick="demoLogin()">
+                    <i class="bi bi-person" style="margin-right:6px"></i>演示用户一键登录
+                </button>
+
+                <div class="login-footer">
+                    <p>默认账号: admin / admin | demo / demo</p>
+                    <p style="margin-top:4px;">MASS v2.0 | 仅供研究学习使用</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // 背景粒子动画
+    function createParticles() {
+        const container = document.getElementById('particles');
+        for (let i = 0; i < 20; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            p.style.left = Math.random() * 100 + '%';
+            p.style.animationDelay = Math.random() * 15 + 's';
+            p.style.animationDuration = (10 + Math.random() * 10) + 's';
+            const colors = ['#3b82f6', '#06b6d4', '#a855f7', '#22c55e'];
+            p.style.background = colors[Math.floor(Math.random() * colors.length)];
+            container.appendChild(p);
+        }
+    }
+    createParticles();
+
+    function showError(msg) {
+        const el = document.getElementById('errorMsg');
+        el.textContent = msg;
+        el.classList.add('show');
+        setTimeout(() => el.classList.remove('show'), 4000);
+    }
+
+    function handleLogin(e) {
+        e.preventDefault();
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        if (!username || !password) {
+            showError('请输入用户名和密码');
+            return;
+        }
+        doLogin(username, password);
+    }
+
+    function adminLogin() {
+        doLogin('admin', 'admin');
+    }
+
+    function demoLogin() {
+        doLogin('demo', 'demo');
+    }
+
+    function doLogin(username, password) {
+        fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                window.location.href = '/dashboard';
+            } else {
+                showError(data.message || '登录失败');
+            }
+        })
+        .catch(() => showError('网络错误，请重试'));
+    }
+
+    // Enter key
+    document.getElementById('password')?.addEventListener('keypress', e => {
+        if (e.key === 'Enter') handleLogin(e);
+    });
+    </script>
+</body>
+</html>

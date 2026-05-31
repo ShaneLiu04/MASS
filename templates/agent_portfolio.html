@@ -1,0 +1,1404 @@
+{% extends "base.html" %}
+{% block title %}组合分析{% endblock %}
+{% block content %}
+
+<!-- ========== Quick Action Bar ========== -->
+<div class="mass-section">
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <button class="mass-btn mass-btn-ghost" onclick="loadDemoPortfolio()">
+            <i class="bi bi-magic" style="margin-right:4px;color:var(--accent-purple)"></i>加载演示组合
+        </button>
+        <button class="mass-btn mass-btn-ghost" onclick="loadVirtualPositions()">
+            <i class="bi bi-download" style="margin-right:4px;color:var(--accent-blue)"></i>导入虚拟持仓
+        </button>
+        <button class="mass-btn mass-btn-ghost" onclick="clearAllHoldings()">
+            <i class="bi bi-trash" style="margin-right:4px;color:var(--accent-red)"></i>清空持仓
+        </button>
+        <div style="flex:1;"></div>
+        <button class="mass-btn mass-btn-ghost" id="btnExportCsv" style="display:none;" onclick="exportPortfolioCSV()">
+            <i class="bi bi-file-earmark-spreadsheet" style="margin-right:4px;color:var(--accent-green)"></i>导出CSV
+        </button>
+        <button class="mass-btn mass-btn-ghost" id="btnExportReport" style="display:none;" onclick="exportPortfolioReport()">
+            <i class="bi bi-file-earmark-text" style="margin-right:4px;color:var(--accent-cyan)"></i>生成报告
+        </button>
+    </div>
+</div>
+
+<!-- ========== Holding Input ========== -->
+<div class="mass-section">
+    <div class="mass-card" style="padding:20px 24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+            <div style="font-size:var(--font-size-lg); font-weight:600;">
+                <i class="bi bi-briefcase" style="margin-right:6px;color:var(--accent-purple)"></i>持仓录入
+            </div>
+            <span style="font-size:11px; color:var(--text-muted);" id="holdingCountLabel">0 只持仓</span>
+        </div>
+        <div id="holdingRows">
+            <div class="holding-row" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <input type="text" class="mass-input" placeholder="代码" style="width:90px;" maxlength="6" id="hCode0" onchange="fetchStockName(0)">
+                <input type="text" class="mass-input" placeholder="名称" style="width:110px;" readonly id="hName0">
+                <input type="number" class="mass-input" placeholder="成本价" style="width:100px;" step="0.01" id="hCost0">
+                <input type="number" class="mass-input" placeholder="股数" style="width:100px;" id="hShares0">
+                <button class="mass-btn mass-btn-ghost" style="padding:8px 12px;" onclick="addHoldingRow()">
+                    <i class="bi bi-plus-lg"></i>
+                </button>
+            </div>
+        </div>
+        <div style="margin-top:16px;">
+            <button class="mass-btn mass-btn-primary" onclick="analyzePortfolio()">
+                <i class="bi bi-lightning" style="margin-right:4px"></i>开始组合分析
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== Loading ========== -->
+<style>
+.sse-loading-container { text-align:center; padding:32px 20px; max-width:720px; margin:0 auto; }
+.sse-progress-header { margin-bottom:20px; }
+.sse-progress-bar-container { width:100%; height:8px; background:var(--bg-tertiary); border-radius:4px; overflow:hidden; margin-bottom:8px; }
+.sse-progress-bar { height:100%; width:0%; background:linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); border-radius:4px; transition:width 0.6s cubic-bezier(.4,0,.2,1); }
+.sse-progress-stats { display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); }
+.sse-agent-stage { margin:20px 0; }
+.sse-stage-text { font-size:15px; font-weight:600; color:var(--text-primary); margin-bottom:14px; min-height:22px; transition:opacity 0.3s; }
+.sse-agents-row { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; }
+.sse-agent-card { width:76px; padding:10px 6px; border-radius:10px; background:var(--bg-secondary); border:1px solid var(--border-color); text-align:center; transition:all 0.4s; position:relative; }
+.sse-agent-card.active { border-color:var(--accent-blue); box-shadow:0 0 12px rgba(59,130,246,0.25); transform:translateY(-2px); }
+.sse-agent-card.done { border-color:var(--accent-green); opacity:0.75; }
+.sse-agent-card.done .sse-agent-icon { filter:grayscale(0.3); }
+.sse-agent-icon { width:36px; height:36px; border-radius:50%; margin:0 auto 6px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; position:relative; }
+.sse-agent-icon i { line-height:1; }
+.sse-agent-icon.pulse::after { content:''; position:absolute; inset:-4px; border-radius:50%; border:2px solid currentColor; opacity:0; animation:ssePulse 1.8s infinite; }
+@keyframes ssePulse { 0% { transform:scale(1); opacity:0.6; } 100% { transform:scale(1.5); opacity:0; } }
+.sse-agent-name { font-size:10px; font-weight:600; color:var(--text-secondary); }
+.sse-agent-status { font-size:9px; color:var(--text-muted); margin-top:2px; }
+.sse-data-sources { display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin:14px 0; min-height:28px; }
+.sse-ds-tag { font-size:10px; padding:3px 8px; border-radius:12px; background:var(--bg-tertiary); color:var(--text-muted); border:1px solid var(--border-color); transition:all 0.4s; }
+.sse-ds-tag.connected { background:rgba(34,197,94,0.12); color:var(--accent-green); border-color:var(--accent-green); }
+.sse-ds-tag.failed { background:rgba(239,68,68,0.12); color:var(--accent-red); border-color:var(--accent-red); }
+.sse-completed-stocks { margin-top:16px; }
+.sse-cs-title { font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-align:left; }
+.sse-cs-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:8px; text-align:left; }
+.sse-cs-card { padding:10px 12px; border-radius:8px; background:var(--bg-secondary); border:1px solid var(--border-color); transition:all 0.3s; animation:sseCardIn 0.4s ease-out; }
+@keyframes sseCardIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+.sse-cs-code { font-size:12px; font-weight:700; color:var(--text-primary); }
+.sse-cs-name { font-size:10px; color:var(--text-muted); margin-bottom:4px; }
+.sse-cs-signal { display:inline-block; font-size:10px; font-weight:600; padding:1px 6px; border-radius:4px; }
+.sse-cs-signal.BUY { background:rgba(34,197,94,0.15); color:#16a34a; }
+.sse-cs-signal.SELL { background:rgba(239,68,68,0.15); color:#dc2626; }
+.sse-cs-signal.HOLD { background:rgba(245,158,11,0.15); color:#d97706; }
+.sse-cs-score { font-size:11px; color:var(--text-secondary); margin-top:4px; }
+.sse-cancel-btn { margin-top:16px; font-size:12px; color:var(--text-muted); background:none; border:1px solid var(--border-color); padding:6px 16px; border-radius:6px; cursor:pointer; transition:all 0.2s; }
+.sse-cancel-btn:hover { color:var(--accent-red); border-color:var(--accent-red); }
+.sse-spinner-ring { width:48px; height:48px; margin:0 auto 14px; position:relative; }
+.sse-spinner-ring svg { width:100%; height:100%; animation:sseSpin 1.2s linear infinite; }
+@keyframes sseSpin { 100% { transform:rotate(360deg); } }
+</style>
+
+<div id="portfolioLoading" class="mass-loading" style="display:none;">
+    <div class="sse-loading-container">
+        <div class="sse-spinner-ring">
+            <svg viewBox="0 0 48 48">
+                <circle cx="24" cy="24" r="20" fill="none" stroke="var(--border-color)" stroke-width="3"/>
+                <circle cx="24" cy="24" r="20" fill="none" stroke="var(--accent-purple)" stroke-width="3" stroke-linecap="round" stroke-dasharray="80 125" stroke-dashoffset="0"/>
+            </svg>
+        </div>
+        <div class="sse-progress-header">
+            <div class="sse-progress-bar-container">
+                <div class="sse-progress-bar" id="sseProgressBar"></div>
+            </div>
+            <div class="sse-progress-stats">
+                <span id="sseProgressText">准备中...</span>
+                <span id="sseEtaText">预计剩余: 计算中</span>
+            </div>
+        </div>
+        <div class="sse-agent-stage">
+            <div class="sse-stage-text" id="sseStageText">正在初始化多智能体分析引擎...</div>
+            <div class="sse-agents-row" id="sseAgentsRow"></div>
+        </div>
+        <div class="sse-data-sources" id="sseDataSources"></div>
+        <div class="sse-completed-stocks" id="sseCompletedStocks" style="display:none;">
+            <div class="sse-cs-title">已完成的诊断</div>
+            <div class="sse-cs-grid" id="sseCsGrid"></div>
+        </div>
+        <button class="sse-cancel-btn" id="sseCancelBtn" onclick="cancelPortfolioAnalysis()">取消分析</button>
+    </div>
+</div>
+
+<!-- ========== Results ========== -->
+<div id="portfolioResult" style="display:none;">
+
+    <!-- Summary Metrics -->
+    <!-- Portfolio Health Score -->
+    <div class="mass-card" style="margin-bottom:24px; padding:20px 24px; display:flex; align-items:center; gap:20px;">
+        <div style="position:relative; width:80px; height:80px; flex-shrink:0;">
+            <svg viewBox="0 0 80 80" style="width:80px; height:80px; transform:rotate(-90deg);">
+                <circle cx="40" cy="40" r="36" fill="none" stroke="var(--border-medium)" stroke-width="6"/>
+                <circle id="healthCircle" cx="40" cy="40" r="36" fill="none" stroke="var(--accent-green)" stroke-width="6"
+                    stroke-dasharray="226" stroke-dashoffset="226" stroke-linecap="round"
+                    style="transition: stroke-dashoffset 1s ease;"/>
+            </svg>
+            <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;">
+                <div id="healthScore" style="font-size:22px; font-weight:700; color:var(--text-primary);">--</div>
+                <div style="font-size:10px; color:var(--text-muted);">健康度</div>
+            </div>
+        </div>
+        <div style="flex:1;">
+            <div id="healthLabel" style="font-size:15px; font-weight:600; color:var(--text-primary); margin-bottom:6px;">--</div>
+            <div id="healthDesc" style="font-size:12px; color:var(--text-secondary); line-height:1.6;">--</div>
+        </div>
+        <div id="errorsBadge" style="display:none; padding:6px 12px; background:rgba(239,68,68,0.1); color:var(--accent-red); border-radius:var(--radius-sm); font-size:12px; font-weight:500;">
+            <i class="bi bi-exclamation-triangle"></i> <span id="errorsCount">0</span> 只分析失败
+        </div>
+    </div>
+
+    <div class="mass-grid mass-grid-4" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="pTotal">--</div>
+                <div class="mass-metric-label">持仓数量</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value up" id="pBuy">--</div>
+                <div class="mass-metric-label">买入信号</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" style="color:var(--accent-yellow);" id="pHold">--</div>
+                <div class="mass-metric-label">观望信号</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value down" id="pSell">--</div>
+                <div class="mass-metric-label">卖出信号</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mass-grid mass-grid-4" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" style="color:var(--accent-cyan);" id="pWeightedRet">--</div>
+                <div class="mass-metric-label">加权预期收益</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" style="color:var(--accent-purple);" id="pAvgRisk">--</div>
+                <div class="mass-metric-label">平均风险等级</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="pTotalPos">--</div>
+                <div class="mass-metric-label">总建议仓位</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" style="color:var(--accent-green);" id="pDivScore">--</div>
+                <div class="mass-metric-label">分散度评分</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 1 -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-pie-chart" style="margin-right:6px;color:var(--accent-blue)"></i>持仓配置</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="portfolioPieChart" class="mass-chart-container" style="height:320px;"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-exclamation-triangle" style="margin-right:6px;color:var(--accent-red)"></i>风险-收益矩阵</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="portfolioRiskChart" class="mass-chart-container" style="height:320px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Agent Consensus Matrix -->
+    <div class="mass-card" style="margin-bottom:24px;">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-grid-3x3" style="margin-right:6px;color:var(--accent-cyan)"></i>多智能体共识矩阵</div>
+            <div style="font-size:11px;color:var(--text-muted);">点击股票行可展开各Agent详细观点</div>
+        </div>
+        <div class="mass-card-body" style="padding:0;">
+            <div id="consensusMatrixChart" class="mass-chart-container" style="height:380px;"></div>
+        </div>
+    </div>
+
+    <!-- Weight Scheme + Market Cycle -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-sliders" style="margin-right:6px;color:var(--accent-purple)"></i>权重分配与市场周期</div>
+            </div>
+            <div class="mass-card-body" style="display:flex; gap:16px; align-items:center;">
+                <div style="flex:0 0 120px; text-align:center;">
+                    <div id="marketCycleBadge" style="font-size:28px; font-weight:700; color:var(--accent-cyan);">--</div>
+                    <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">市场周期</div>
+                </div>
+                <div style="flex:1;">
+                    <div id="weightDesc" style="font-size:13px; color:var(--text-secondary); line-height:1.6; margin-bottom:10px;">--</div>
+                    <div id="weightPieChart" style="height:180px;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-lightbulb" style="margin-right:6px;color:var(--accent-yellow)"></i>组合Chairman建议</div>
+            </div>
+            <div class="mass-card-body" id="chairmanAdviceContent" style="font-size:13px; line-height:1.8; color:var(--text-secondary);">
+                <!-- Dynamic -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 2 -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-bar-chart" style="margin-right:6px;color:var(--accent-green)"></i>信号分布</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="portfolioSignalChart" class="mass-chart-container" style="height:280px;"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-diagram-3" style="margin-right:6px;color:var(--accent-orange)"></i>行业分布</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="portfolioIndustryChart" class="mass-chart-container" style="height:280px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Risk Distribution + Rebalance -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-shield-exclamation" style="margin-right:6px;color:var(--agent-ra)"></i>风险等级分布</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="portfolioRiskDistChart" class="mass-chart-container" style="height:260px;"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-arrow-left-right" style="margin-right:6px;color:var(--accent-cyan)"></i>再平衡建议</div>
+            </div>
+            <div class="mass-card-body">
+                <div id="rebalanceContent" style="font-size:13px; line-height:1.8; color:var(--text-secondary);">
+                    <!-- Dynamic -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Portfolio Scenarios + Conflict Summary -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-graph-up-arrow" style="margin-right:6px;color:var(--accent-green)"></i>组合情景分析</div>
+            </div>
+            <div class="mass-card-body" id="scenarioContent">
+                <!-- Dynamic scenario cards -->
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-lightning-charge" style="margin-right:6px;color:var(--accent-red)"></i>智能体冲突与调和</div>
+            </div>
+            <div class="mass-card-body" id="conflictContent" style="font-size:13px; line-height:1.8; color:var(--text-secondary);">
+                <!-- Dynamic -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Table -->
+    <div class="mass-card">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-graph-up-arrow" style="margin-right:6px;color:var(--accent-green)"></i>个股诊断详情</div>
+            <div style="font-size:11px;color:var(--text-muted);">点击股票名称展开多智能体雷达图与详细观点</div>
+        </div>
+        <div class="mass-card-body" style="padding:0; overflow:auto;">
+            <table class="mass-table">
+                <thead>
+                    <tr>
+                        <th style="width:30px;"></th>
+                        <th>股票</th>
+                        <th>行业</th>
+                        <th>决策</th>
+                        <th>置信度</th>
+                        <th>成本价</th>
+                        <th>当前价</th>
+                        <th>盈亏</th>
+                        <th>仓位</th>
+                        <th>预期收益</th>
+                        <th>风险</th>
+                        <th>目标/止损</th>
+                    </tr>
+                </thead>
+                <tbody id="portfolioTable"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let hRowCount = 1;
+let _lastPortfolioData = null;
+
+function addHoldingRow() {
+    const div = document.createElement('div');
+    div.className = 'holding-row';
+    div.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px;';
+    div.innerHTML = `<input type="text" class="mass-input" placeholder="代码" style="width:90px;" maxlength="6" id="hCode${hRowCount}" onchange="fetchStockName(${hRowCount})">
+        <input type="text" class="mass-input" placeholder="名称" style="width:110px;" readonly id="hName${hRowCount}">
+        <input type="number" class="mass-input" placeholder="成本价" style="width:100px;" step="0.01" id="hCost${hRowCount}">
+        <input type="number" class="mass-input" placeholder="股数" style="width:100px;" id="hShares${hRowCount}">
+        <button class="mass-btn mass-btn-ghost" style="padding:8px 12px; color:var(--accent-red);" onclick="this.parentElement.remove(); updateHoldingCount();">-</button>`;
+    document.getElementById('holdingRows').appendChild(div);
+    hRowCount++;
+    updateHoldingCount();
+}
+
+function updateHoldingCount() {
+    const rows = document.querySelectorAll('.holding-row');
+    let count = 0;
+    rows.forEach(row => {
+        const code = row.querySelector('input[id^="hCode"]');
+        if (code && code.value.trim()) count++;
+    });
+    document.getElementById('holdingCountLabel').textContent = count + ' 只持仓';
+}
+
+function fetchStockName(idx) {
+    const codeEl = document.getElementById('hCode' + idx);
+    const nameEl = document.getElementById('hName' + idx);
+    if (!codeEl || !nameEl || codeEl.value.length !== 6) return;
+    // Query stock name from backend
+    fetch('/api/agent/stock/name?code=' + encodeURIComponent(codeEl.value))
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (data && data.name) nameEl.value = data.name;
+        })
+        .catch(() => { /* ignore */ });
+}
+
+function clearAllHoldings() {
+    document.getElementById('holdingRows').innerHTML = `
+        <div class="holding-row" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <input type="text" class="mass-input" placeholder="代码" style="width:90px;" maxlength="6" id="hCode0" onchange="fetchStockName(0)">
+            <input type="text" class="mass-input" placeholder="名称" style="width:110px;" readonly id="hName0">
+            <input type="number" class="mass-input" placeholder="成本价" style="width:100px;" step="0.01" id="hCost0">
+            <input type="number" class="mass-input" placeholder="股数" style="width:100px;" id="hShares0">
+            <button class="mass-btn mass-btn-ghost" style="padding:8px 12px;" onclick="addHoldingRow()">
+                <i class="bi bi-plus-lg"></i>
+            </button>
+        </div>
+    `;
+    hRowCount = 1;
+    updateHoldingCount();
+    document.getElementById('portfolioResult').style.display = 'none';
+}
+
+function loadDemoPortfolio() {
+    clearAllHoldings();
+    const demo = [
+        {code:'000001', name:'平安银行', cost:10.50, shares:1000},
+        {code:'600519', name:'贵州茅台', cost:1680.00, shares:100},
+        {code:'000002', name:'万科A', cost:8.20, shares:2000},
+        {code:'600000', name:'浦发银行', cost:7.80, shares:1500},
+    ];
+    demo.forEach((d, i) => {
+        if (i > 0) addHoldingRow();
+        const rows = document.querySelectorAll('.holding-row');
+        const row = rows[rows.length - 1];
+        const inputs = row.querySelectorAll('input');
+        inputs[0].value = d.code;
+        inputs[1].value = d.name;
+        inputs[2].value = d.cost;
+        inputs[3].value = d.shares;
+    });
+    updateHoldingCount();
+}
+
+function loadVirtualPositions() {
+    fetch('/api/agent/positions')
+        .then(r => r.json())
+        .then(data => {
+            const positions = data.positions || [];
+            if (!positions.length) { alert('暂无虚拟持仓'); return; }
+            clearAllHoldings();
+            positions.forEach((p, i) => {
+                if (i > 0) addHoldingRow();
+                const rows = document.querySelectorAll('.holding-row');
+                const row = rows[rows.length - 1];
+                const inputs = row.querySelectorAll('input');
+                inputs[0].value = p.stock_code;
+                inputs[1].value = p.stock_name || '';
+                inputs[2].value = p.entry_price;
+                inputs[3].value = p.shares;
+            });
+            updateHoldingCount();
+        })
+        .catch(() => alert('获取虚拟持仓失败'));
+}
+
+function getHoldings() {
+    const holdings = [];
+    const rows = document.querySelectorAll('.holding-row');
+    rows.forEach((row, i) => {
+        const inputs = row.querySelectorAll('input');
+        const code = inputs[0]?.value.trim();
+        const name = inputs[1]?.value.trim();
+        const cost = parseFloat(inputs[2]?.value || 0);
+        const shares = parseInt(inputs[3]?.value || 0);
+        if (code && code.length === 6) {
+            holdings.push({code, name, cost, shares});
+        }
+    });
+    return holdings;
+}
+
+// ===== SSE 流式组合分析 =====
+let _sseAbortCtrl = null;
+let _sseStageInterval = null;
+let _sseStartTime = 0;
+let _sseAgentOrder = ['TA-Agent','FA-Agent','CA-Agent','SA-Agent','MA-Agent','RA-Agent'];
+let _sseAgentColors = ['#3b82f6','#8b5cf6','#f59e0b','#ec4899','#10b981','#6366f1'];
+let _sseAgentIcons = ['graph-up-arrow','file-earmark-bar-graph','cash-coin','megaphone','globe','shield-exclamation'];
+let _sseStageTexts = [
+    '正在连接数据源（东方财富、新浪财经、Akshare）...',
+    'TA-Agent 正在分析120日K线形态与技术指标...',
+    'FA-Agent 正在评估财务报表（PE/PB/ROE/现金流）...',
+    'CA-Agent 正在追踪主力资金流向与筹码分布...',
+    'SA-Agent 正在分析市场情绪与舆情热度...',
+    'MA-Agent 正在研判宏观经济周期与行业趋势...',
+    'RA-Agent 正在计算波动率、VaR与回撤风险...',
+    'Chairman 正在综合6个Agent的观点生成决策...',
+    '正在构建组合共识矩阵与冲突检测模型...',
+    '正在生成再平衡建议与情景分析...'
+];
+let _sseDataSourceNames = ['东方财富','新浪财经','Akshare','同花顺','雪球'];
+
+function initSseLoading(holdings) {
+    const total = holdings.length;
+    document.getElementById('sseProgressBar').style.width = '0%';
+    document.getElementById('sseProgressText').textContent = '0 / ' + total;
+    document.getElementById('sseEtaText').textContent = '预计剩余: 计算中';
+    document.getElementById('sseStageText').textContent = _sseStageTexts[0];
+    document.getElementById('sseCompletedStocks').style.display = 'none';
+    document.getElementById('sseCsGrid').innerHTML = '';
+    document.getElementById('sseDataSources').innerHTML = '';
+    document.getElementById('sseCancelBtn').style.display = 'inline-block';
+
+    // Agent cards
+    const row = document.getElementById('sseAgentsRow');
+    row.innerHTML = '';
+    _sseAgentOrder.forEach((name, i) => {
+        const card = document.createElement('div');
+        card.className = 'sse-agent-card';
+        card.id = 'sseAgent' + i;
+        card.innerHTML = `<div class="sse-agent-icon" style="background:${_sseAgentColors[i]}"><i class="bi bi-${_sseAgentIcons[i]}"></i></div><div class="sse-agent-name">${name}</div><div class="sse-agent-status" id="sseAgentStatus${i}">等待中</div>`;
+        row.appendChild(card);
+    });
+
+    // Data source tags (random connection animation)
+    const dsRow = document.getElementById('sseDataSources');
+    _sseDataSourceNames.forEach((name, i) => {
+        const tag = document.createElement('span');
+        tag.className = 'sse-ds-tag';
+        tag.id = 'sseDs' + i;
+        tag.textContent = name;
+        dsRow.appendChild(tag);
+        setTimeout(() => {
+            const el = document.getElementById('sseDs' + i);
+            if (el) {
+                const isConnected = Math.random() > 0.15;
+                el.classList.add(isConnected ? 'connected' : 'failed');
+                el.innerHTML = name + (isConnected ? ' <i class="bi bi-check-lg"></i>' : ' <i class="bi bi-x-lg"></i>');
+            }
+        }, 800 + i * 400 + Math.random() * 600);
+    });
+
+    // Stage text rotation
+    if (_sseStageInterval) clearInterval(_sseStageInterval);
+    let stageIdx = 0;
+    _sseStageInterval = setInterval(() => {
+        stageIdx = (stageIdx + 1) % _sseStageTexts.length;
+        const el = document.getElementById('sseStageText');
+        if (el) {
+            el.style.opacity = '0';
+            setTimeout(() => {
+                if (el) { el.textContent = _sseStageTexts[stageIdx]; el.style.opacity = '1'; }
+            }, 300);
+        }
+        // Activate a random agent
+        const activeIdx = stageIdx % _sseAgentOrder.length;
+        _sseAgentOrder.forEach((_, i) => {
+            const c = document.getElementById('sseAgent' + i);
+            const s = document.getElementById('sseAgentStatus' + i);
+            if (!c || !s) return;
+            if (i === activeIdx) {
+                c.classList.add('active');
+                c.querySelector('.sse-agent-icon').classList.add('pulse');
+                s.textContent = '分析中...';
+            } else if (!c.classList.contains('done')) {
+                c.classList.remove('active');
+                c.querySelector('.sse-agent-icon').classList.remove('pulse');
+                s.textContent = '等待中';
+            }
+        });
+    }, 4500);
+}
+
+function updateSseProgress(progress, completed, total) {
+    document.getElementById('sseProgressBar').style.width = progress + '%';
+    document.getElementById('sseProgressText').textContent = completed + ' / ' + total;
+    // ETA estimation
+    if (_sseStartTime && completed > 0) {
+        const elapsed = (Date.now() - _sseStartTime) / 1000;
+        const avgPerStock = elapsed / completed;
+        const remaining = Math.round(avgPerStock * (total - completed));
+        let etaText = '预计剩余: ';
+        if (remaining < 60) etaText += remaining + '秒';
+        else etaText += Math.ceil(remaining / 60) + '分钟';
+        document.getElementById('sseEtaText').textContent = etaText;
+    }
+}
+
+function addCompletedStockPreview(preview) {
+    const container = document.getElementById('sseCompletedStocks');
+    const grid = document.getElementById('sseCsGrid');
+    container.style.display = 'block';
+    const card = document.createElement('div');
+    card.className = 'sse-cs-card';
+    const sig = preview.signal || 'HOLD';
+    card.innerHTML = `<div class="sse-cs-code">${preview.code || ''}</div><div class="sse-cs-name">${preview.name || ''}</div><span class="sse-cs-signal ${sig}">${sig}</span><div class="sse-cs-score">信心度 ${(preview.confidence || 0).toFixed(0)}% | 评分 ${(preview.score || 0).toFixed(0)}</div>`;
+    grid.appendChild(card);
+}
+
+function markAgentsDone() {
+    _sseAgentOrder.forEach((_, i) => {
+        const c = document.getElementById('sseAgent' + i);
+        const s = document.getElementById('sseAgentStatus' + i);
+        if (c) { c.classList.remove('active'); c.classList.add('done'); c.querySelector('.sse-agent-icon').classList.remove('pulse'); }
+        if (s) s.textContent = '已完成';
+    });
+}
+
+function cancelPortfolioAnalysis() {
+    if (_sseAbortCtrl) { _sseAbortCtrl.abort(); }
+    if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+    document.getElementById('portfolioLoading').style.display = 'none';
+}
+
+async function analyzePortfolio() {
+    const holdings = getHoldings();
+    if (!holdings.length) { alert('请至少录入一个持仓'); return; }
+
+    document.getElementById('portfolioLoading').style.display = 'block';
+    document.getElementById('portfolioResult').style.display = 'none';
+    initSseLoading(holdings);
+    _sseStartTime = Date.now();
+    _sseAbortCtrl = new AbortController();
+
+    const results = [];
+    const errors = [];
+    let summaryData = null;
+
+    try {
+        const response = await fetch('/api/agent/portfolio/analyze/stream', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({holdings}),
+            signal: _sseAbortCtrl.signal
+        });
+
+        if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.error || body.message || '服务器错误 (' + response.status + ')');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function processBuffer(isFinal) {
+            const parts = buffer.split('\n\n');
+            if (!isFinal) buffer = parts.pop();
+            else buffer = '';
+            for (const part of parts) {
+                const lines = part.trim().split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data:')) {
+                        const jsonStr = line.slice(5).trim();
+                        try {
+                            const evt = JSON.parse(jsonStr);
+                            handleSseEvent(evt, results, errors, holdings);
+                            if (evt.stage === 'done' || evt.stage === 'summary') {
+                                summaryData = evt;
+                            }
+                        } catch (e) {
+                            // ignore malformed JSON
+                        }
+                    }
+                }
+            }
+        }
+
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) {
+                buffer += decoder.decode();
+                processBuffer(true);
+                break;
+            }
+            buffer += decoder.decode(value, {stream: true});
+            processBuffer(false);
+        }
+
+        if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+        document.getElementById('portfolioLoading').style.display = 'none';
+
+        if (!results.length && errors.length) {
+            alert('所有持仓分析均失败:\n' + errors.map(e => e.code + ': ' + e.error).join('\n'));
+            return;
+        }
+
+        // Build compatible data structure for renderAllCharts
+        const finalData = summaryData && summaryData.portfolio_risk ? {
+            holdings_analysis: results,
+            portfolio_risk: summaryData.portfolio_risk,
+            errors: errors,
+            total: holdings.length,
+            success: results.length,
+            failed: errors.length
+        } : {
+            holdings_analysis: results,
+            portfolio_risk: aggregatePortfolioRiskClient(results),
+            errors: errors,
+            total: holdings.length,
+            success: results.length,
+            failed: errors.length
+        };
+
+        document.getElementById('portfolioResult').style.display = 'block';
+        _lastPortfolioData = finalData;
+        const portfolioRisk = finalData.portfolio_risk || {};
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                renderAllCharts(finalData, portfolioRisk, holdings, errors);
+            }, 50);
+        });
+
+    } catch (err) {
+        if (err.name === 'AbortError') return;
+        if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+        document.getElementById('portfolioLoading').style.display = 'none';
+        alert('分析失败: ' + err.message);
+    }
+}
+
+function handleSseEvent(evt, results, errors, holdings) {
+    if (evt.stage === 'start') {
+        updateSseProgress(0, 0, evt.total || holdings.length);
+    } else if (evt.stage === 'stock_done') {
+        if (evt.result) {
+            results.push(evt.result);
+            addCompletedStockPreview({
+                code: evt.result.stock_code || evt.code,
+                name: evt.result.stock_name || evt.name,
+                signal: evt.result.signal || 'HOLD',
+                confidence: evt.result.confidence || 0,
+                score: evt.result.score || 0
+            });
+        }
+        updateSseProgress(evt.progress, evt.completed, evt.total);
+    } else if (evt.stage === 'stock_error') {
+        errors.push({code: evt.code, error: evt.error});
+        updateSseProgress(evt.progress, evt.completed, evt.total);
+    } else if (evt.stage === 'summary') {
+        markAgentsDone();
+        document.getElementById('sseStageText').textContent = '分析完成，正在渲染图表...';
+        updateSseProgress(100, evt.completed, evt.total);
+    } else if (evt.stage === 'done') {
+        document.getElementById('sseCancelBtn').style.display = 'none';
+    }
+}
+
+// Client-side fallback risk aggregation if summary event lacks portfolio_risk
+function aggregatePortfolioRiskClient(results) {
+    const n = results.length;
+    if (!n) return {};
+    const buy = results.filter(r => (r.signal || 'HOLD') === 'BUY').length;
+    const hold = results.filter(r => (r.signal || 'HOLD') === 'HOLD').length;
+    const sell = results.filter(r => (r.signal || 'HOLD') === 'SELL').length;
+    const avgRisk = results.reduce((s, r) => s + (r.risk_level || 3), 0) / n;
+    return {
+        total_stocks: n, buy_signals: buy, hold_signals: hold, sell_signals: sell,
+        avg_risk_level: avgRisk, signal_distribution: {buy_pct: buy/n*100, hold_pct: hold/n*100, sell_pct: sell/n*100}
+    };
+}
+
+function renderAllCharts(data, risk, holdings, errors) {
+    const riskVal = data.portfolio_risk || {};
+    document.getElementById('pTotal').textContent = riskVal.total_stocks || 0;
+        document.getElementById('pBuy').textContent = risk.buy_signals || 0;
+        document.getElementById('pHold').textContent = risk.hold_signals || 0;
+        document.getElementById('pSell').textContent = risk.sell_signals || 0;
+        document.getElementById('pWeightedRet').textContent = (risk.weighted_expected_return || 0).toFixed(1) + '%';
+        document.getElementById('pAvgRisk').textContent = (risk.avg_risk_level || 0).toFixed(1) + '/5';
+        document.getElementById('pTotalPos').textContent = ((risk.total_recommended_position || 0) * 100).toFixed(1) + '%';
+        document.getElementById('pDivScore').textContent = (risk.diversification_score || 0).toFixed(0);
+
+        // Health score
+        renderHealthScore(risk);
+
+        // Errors badge
+        const errBadge = document.getElementById('errorsBadge');
+        if (errors && errors.length) {
+            errBadge.style.display = 'inline-block';
+            document.getElementById('errorsCount').textContent = errors.length;
+            errBadge.title = errors.map(e => (e.code || '未知') + ': ' + (e.error || '未知错误')).join('\n');
+        } else {
+            errBadge.style.display = 'none';
+        }
+
+        renderConsensusMatrix('consensusMatrixChart', risk.agent_matrix || {agents:[], stocks:[]});
+        renderWeightScheme('weightPieChart', 'marketCycleBadge', 'weightDesc', risk.portfolio_weight_scheme || {});
+        renderChairmanAdvice('chairmanAdviceContent', risk.chairman_portfolio_advice || []);
+        renderPortfolioPie('portfolioPieChart', data.holdings_analysis || []);
+        renderPortfolioRisk('portfolioRiskChart', data.holdings_analysis || []);
+        renderPortfolioSignal('portfolioSignalChart', risk.signal_distribution || {});
+        renderPortfolioIndustry('portfolioIndustryChart', risk.industry_distribution || {});
+        renderPortfolioRiskDist('portfolioRiskDistChart', risk.risk_distribution || {});
+        renderRebalance('rebalanceContent', risk.rebalance_suggestions || []);
+        renderScenarios('scenarioContent', risk.portfolio_scenarios || {});
+        renderConflicts('conflictContent', risk.conflict_summary || {total_conflicts:0, conflicts:[]});
+        renderPortfolioTable(data.holdings_analysis || [], holdings, errors, risk.agent_matrix || {agents:[], stocks:[]});
+
+        document.getElementById('btnExportCsv').style.display = 'inline-flex';
+        document.getElementById('btnExportReport').style.display = 'inline-flex';
+
+        window.scrollTo({top: document.getElementById('portfolioResult').offsetTop - 80, behavior: 'smooth'});
+}
+
+function renderHealthScore(risk) {
+    const n = risk.total_stocks || 0;
+    const divScore = risk.diversification_score || 0;
+    const avgRisk = risk.avg_risk_level || 3;
+    const buyPct = risk.signal_distribution?.buy_pct || 0;
+    const sellPct = risk.signal_distribution?.sell_pct || 0;
+
+    // 健康度评分算法：分散度(30%) + 风险均衡(30%) + 信号积极性(40%)
+    let score = 0;
+    score += Math.min(divScore, 100) * 0.30;
+    score += Math.max(0, (5 - avgRisk) / 4 * 100) * 0.30;
+    score += (buyPct * 0.8 - sellPct * 0.5 + 20) * 0.40;
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    const circle = document.getElementById('healthCircle');
+    const circumference = 226; // 2 * PI * 36
+    const offset = circumference - (score / 100) * circumference;
+    circle.style.strokeDashoffset = offset;
+
+    let color = 'var(--accent-green)';
+    let label = '组合健康';
+    let desc = '配置均衡，风险可控，信号积极。建议维持当前配置。';
+    if (score < 40) {
+        color = 'var(--accent-red)';
+        label = '组合风险较高';
+        desc = '分散度不足或风险过高，卖出信号较多。建议减仓或调整持仓结构。';
+    } else if (score < 70) {
+        color = 'var(--accent-yellow)';
+        label = '组合一般';
+        desc = '部分指标需要关注。可适当优化仓位分布或降低高风险持仓。';
+    }
+    circle.style.stroke = color;
+    document.getElementById('healthScore').textContent = score;
+    document.getElementById('healthScore').style.color = color;
+    document.getElementById('healthLabel').textContent = label;
+    document.getElementById('healthLabel').style.color = color;
+    document.getElementById('healthDesc').textContent = desc;
+}
+
+// ========== Charts ==========
+
+function renderPortfolioPie(domId, items) {
+    const chart = echarts.init(document.getElementById(domId));
+    const data = items.map((item, i) => ({
+        name: item.stock_name || item.stock_code,
+        value: item.final_decision?.position_pct || 0.1,
+        itemStyle: { color: ['#3b82f6','#06b6d4','#a855f7','#f97316','#eab308','#22c55e','#ef4444','#8b5cf6','#14b8a6','#f43f5e'][i % 10] }
+    }));
+    chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        series: [{
+            type: 'pie', radius: ['40%', '70%'], center: ['50%', '50%'],
+            roseType: 'radius', itemStyle: { borderRadius: 6, borderColor: '#0a0e1a', borderWidth: 2 },
+            label: { color: '#8b9bb4', fontSize: 11 },
+            emphasis: { label: { show: true, fontSize: 13, fontWeight: 'bold' } },
+            data
+        }]
+    });
+}
+
+function renderPortfolioRisk(domId, items) {
+    const chart = echarts.init(document.getElementById(domId));
+    const data = items.map(item => {
+        const fd = item.final_decision || {};
+        const ra = item.opinions?.['RA-Agent']?.raw_data || {};
+        return [ra.risk_level || 3, fd.expected_return_pct || 0, item.stock_name || item.stock_code];
+    });
+    chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { formatter: p => `${p.data[2]}<br>风险: ${p.data[0]}<br>收益: ${p.data[1]}%`,
+            backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        grid: { left: '12%', right: '8%', top: '10%', bottom: '15%' },
+        xAxis: { name: '风险等级', type: 'value', min: 0.5, max: 5.5, axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        yAxis: { name: '预期收益%', type: 'value', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        series: [{ type: 'scatter', symbolSize: 30, data, itemStyle: { color: p => p.data[1] > 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)', borderColor: p => p.data[1] > 0 ? '#22c55e' : '#ef4444', borderWidth: 2 }, label: { show: true, formatter: p => p.data[2], color: '#e8ecf4', fontSize: 10 } }]
+    });
+}
+
+function renderPortfolioSignal(domId, dist) {
+    const chart = echarts.init(document.getElementById(domId));
+    chart.setOption({
+        backgroundColor: 'transparent',
+        grid: { left: '20%', right: '15%', top: '10%', bottom: '10%' },
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        xAxis: { type: 'value', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        yAxis: { type: 'category', data: ['卖出', '观望', '买入'], axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#e8ecf4', fontSize: 12 } },
+        series: [{
+            type: 'bar', data: [
+                { value: dist.sell || 0, itemStyle: { color: '#ef4444' } },
+                { value: dist.hold || 0, itemStyle: { color: '#eab308' } },
+                { value: dist.buy || 0, itemStyle: { color: '#22c55e' } }
+            ],
+            barWidth: '50%', label: { show: true, position: 'right', color: '#e8ecf4', fontSize: 13, fontWeight: 'bold', formatter: p => p.value + '只 (' + (dist[[p.name==='买入'?'buy_pct':p.name==='观望'?'hold_pct':'sell_pct']] || 0) + '%)' }
+        }]
+    });
+}
+
+function renderPortfolioIndustry(domId, industries) {
+    const chart = echarts.init(document.getElementById(domId));
+    const data = Object.entries(industries).map(([name, value]) => ({name, value})).sort((a,b) => b.value - a.value);
+    const colors = ['#3b82f6','#06b6d4','#a855f7','#f97316','#eab308','#22c55e','#ef4444','#8b5cf6'];
+    chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        grid: { left: '22%', right: '15%', top: '8%', bottom: '8%' },
+        xAxis: { type: 'value', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        yAxis: { type: 'category', data: data.map(d => d.name), axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#e8ecf4', fontSize: 11 } },
+        series: [{ type: 'bar', data: data.map((d, i) => ({value: d.value, itemStyle: { color: colors[i % colors.length] }})), barWidth: '60%', label: { show: true, position: 'right', color: '#e8ecf4', fontSize: 11 } }]
+    });
+}
+
+function renderPortfolioRiskDist(domId, dist) {
+    const chart = echarts.init(document.getElementById(domId));
+    const colors = ['#22c55e','#84cc16','#eab308','#f97316','#ef4444'];
+    chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        grid: { left: '12%', right: '8%', top: '10%', bottom: '15%' },
+        xAxis: { type: 'category', data: ['1极低','2低','3中','4高','5极高'], axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#e8ecf4', fontSize: 11 } },
+        yAxis: { type: 'value', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        series: [{ type: 'bar', data: [1,2,3,4,5].map((lvl, i) => ({value: dist[lvl] || 0, itemStyle: { color: colors[i] }})), barWidth: '50%', label: { show: true, position: 'top', color: '#e8ecf4', fontSize: 12 } }]
+    });
+}
+
+function renderRebalance(domId, suggestions) {
+    const el = document.getElementById(domId);
+    if (!suggestions.length) {
+        el.innerHTML = '<div style="color:var(--text-muted); font-size:13px;"><i class="bi bi-check-circle" style="color:var(--accent-green); margin-right:4px;"></i>当前组合配置均衡，暂无需要紧急调整的持仓。各Agent观点基本一致，风险收益比在合理范围内。</div>';
+        return;
+    }
+
+    const actionMeta = {
+        '清仓':   { color: '#ef4444', icon: 'bi-trash', bg: 'rgba(239,68,68,0.06)' },
+        '减仓':   { color: '#f97316', icon: 'bi-arrow-down-circle', bg: 'rgba(249,115,22,0.06)' },
+        '止盈':   { color: '#eab308', icon: 'bi-cash-coin', bg: 'rgba(234,179,8,0.06)' },
+        '观望':   { color: '#8b9bb4', icon: 'bi-eye', bg: 'rgba(100,130,200,0.06)' },
+        '替换':   { color: '#a855f7', icon: 'bi-arrow-repeat', bg: 'rgba(168,85,247,0.06)' },
+        '加仓':   { color: '#22c55e', icon: 'bi-arrow-up-circle', bg: 'rgba(34,197,94,0.06)' },
+        '分散':   { color: '#06b6d4', icon: 'bi-diagram-3', bg: 'rgba(6,182,212,0.06)' },
+        '审视':   { color: '#3b82f6', icon: 'bi-search', bg: 'rgba(59,130,246,0.06)' },
+        '防御':   { color: '#ef4444', icon: 'bi-shield-exclamation', bg: 'rgba(239,68,68,0.06)' },
+    };
+
+    // 分组: 高优先级 (>=8) vs 中优先级 vs 低优先级
+    const high = suggestions.filter(s => s.priority >= 8);
+    const mid  = suggestions.filter(s => s.priority >= 5 && s.priority < 8);
+    const low  = suggestions.filter(s => s.priority < 5);
+
+    let html = '';
+
+    const renderGroup = (items, title, titleColor) => {
+        if (!items.length) return '';
+        let group = `<div style="margin-bottom:12px;">
+            <div style="font-size:12px; font-weight:600; color:${titleColor}; margin-bottom:6px; display:flex; align-items:center; gap:4px;">
+                <i class="bi bi-exclamation-triangle-fill"></i> ${title} (${items.length}条)
+            </div>`;
+        group += items.map(s => {
+            const meta = actionMeta[s.action] || actionMeta['观望'];
+            const isPortfolio = !s.code;
+            const nameTag = isPortfolio
+                ? `<span style="font-weight:600; color:var(--text-primary); font-size:13px;"><i class="bi bi-briefcase" style="margin-right:4px;color:var(--accent-purple);"></i>${s.name}</span>`
+                : `<span style="font-weight:600; color:var(--text-primary); font-size:13px;">${s.name}</span><span style="color:var(--text-muted); font-size:11px; margin-left:4px; font-family:var(--font-mono);">${s.code}</span>`;
+            return `<div style="padding:10px 12px; background:${meta.bg}; border-radius:var(--radius-sm); border-left:3px solid ${meta.color}; margin-bottom:6px;">
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <i class="bi ${meta.icon}" style="color:${meta.color}; font-size:16px;"></i>
+                    ${nameTag}
+                    <span style="color:${meta.color}; font-weight:700; font-size:12px; border:1px solid ${meta.color}; padding:1px 6px; border-radius:var(--radius-sm);">${s.action}</span>
+                    <span style="color:var(--text-secondary); font-size:12px; flex:1; min-width:200px;">${s.reason}</span>
+                </div>
+                ${s.detail ? `<div style="margin-top:6px; font-size:11px; color:var(--text-muted); line-height:1.5; padding-left:24px;">${s.detail}</div>` : ''}
+            </div>`;
+        }).join('');
+        group += '</div>';
+        return group;
+    };
+
+    html += renderGroup(high, '紧急调整', 'var(--accent-red)');
+    html += renderGroup(mid, '建议关注', 'var(--accent-yellow)');
+    html += renderGroup(low, '机会提示', 'var(--accent-green)');
+
+    el.innerHTML = html;
+}
+
+function renderPortfolioTable(items, holdingsInput, errors, agentMatrix) {
+    const tbody = document.getElementById('portfolioTable');
+    const costMap = {};
+    holdingsInput.forEach(h => costMap[h.code] = h);
+    const matrixMap = {};
+    (agentMatrix.stocks || []).forEach(s => matrixMap[s.code] = s);
+
+    let html = items.map((item, idx) => {
+        const fd = item.final_decision || {};
+        const sig = fd.decision === 1 ? '<span class="mass-signal mass-signal-buy">买入</span>' : (fd.decision === -1 ? '<span class="mass-signal mass-signal-sell">卖出</span>' : '<span class="mass-signal mass-signal-hold">观望</span>');
+        const ra = item.opinions?.['RA-Agent']?.raw_data || {};
+        const industry = item.data_summary?.industry || '--';
+        const cost = costMap[item.stock_code]?.cost || 0;
+        const current = item.current_price || 0;
+        const pnl = cost > 0 ? ((current - cost) / cost * 100) : 0;
+        const pnlColor = pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+        const pnlSign = pnl >= 0 ? '+' : '';
+        const matrix = matrixMap[item.stock_code] || {};
+        const hasOverride = matrix.risk_override;
+        const rowId = 'stockRow_' + idx;
+        const detailId = 'stockDetail_' + idx;
+
+        return `<tr id="${rowId}" style="cursor:pointer;" onclick="toggleStockDetail('${detailId}')">
+            <td style="text-align:center; color:var(--text-muted);"><i class="bi bi-chevron-right" id="icon_${detailId}"></i></td>
+            <td><b>${item.stock_name || item.stock_code}</b>${hasOverride ? ' <i class="bi bi-shield-exclamation" style="color:var(--accent-red);" title="' + hasOverride + '"></i>' : ''}<br><span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${item.stock_code}</span></td>
+            <td>${industry}</td>
+            <td>${sig}</td>
+            <td>${(fd.confidence*100).toFixed(0)}%</td>
+            <td style="font-family:var(--font-mono);">¥${cost.toFixed(2)}</td>
+            <td style="font-family:var(--font-mono);">¥${current.toFixed(2)}</td>
+            <td style="color:${pnlColor};font-family:var(--font-mono);font-weight:600;">${pnlSign}${pnl.toFixed(1)}%</td>
+            <td>${(fd.position_pct*100).toFixed(1)}%</td>
+            <td>${(fd.expected_return_pct||0).toFixed(1)}%</td>
+            <td>${ra.risk_level || '-'}/5</td>
+            <td>¥${fd.target_price||'--'} / ¥${fd.stop_loss||'--'}</td>
+        </tr>
+        <tr id="${detailId}" style="display:none;">
+            <td colspan="12" style="padding:0; background:var(--bg-surface); border:none;">
+                <div style="padding:16px 20px;">
+                    <div class="mass-grid mass-grid-2" style="margin-bottom:12px;">
+                        <div>
+                            <div style="font-size:13px; font-weight:600; color:var(--text-primary); margin-bottom:8px;"><i class="bi bi-bullseye" style="margin-right:4px;color:var(--accent-cyan);"></i>六维Agent贡献雷达</div>
+                            <div id="radar_${detailId}" style="height:260px;"></div>
+                        </div>
+                        <div>
+                            <div style="font-size:13px; font-weight:600; color:var(--text-primary); margin-bottom:8px;"><i class="bi bi-chat-square-text" style="margin-right:4px;color:var(--accent-purple);"></i>Chairman决策推理</div>
+                            <div style="font-size:12px; color:var(--text-secondary); line-height:1.7; padding:10px; background:var(--bg-base); border-radius:var(--radius-sm); border-left:3px solid var(--accent-purple);">
+                                ${matrix.chairman_reasoning || fd.reasoning || '暂无详细推理'}
+                            </div>
+                            ${hasOverride ? `<div style="margin-top:8px; font-size:12px; color:var(--accent-red); padding:8px 10px; background:rgba(239,68,68,0.08); border-radius:var(--radius-sm);"><i class="bi bi-shield-exclamation"></i> 风险过滤: ${hasOverride}</div>` : ''}
+                            <div id="agents_${detailId}" style="margin-top:10px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    if (errors && errors.length) {
+        html += errors.map(e => `
+            <tr style="opacity:0.6; background:rgba(239,68,68,0.05);">
+                <td></td>
+                <td><b>${e.code || '未知'}</b><br><span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${e.code || ''}</span></td>
+                <td colspan="10" style="color:var(--accent-red); font-size:12px;">
+                    <i class="bi bi-exclamation-triangle"></i> 分析失败: ${e.error || '未知错误'}
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    tbody.innerHTML = html;
+
+    // Render radar charts for each stock (lazy: only when expanded)
+    items.forEach((item, idx) => {
+        const detailId = 'stockDetail_' + idx;
+        const matrix = matrixMap[item.stock_code];
+        if (matrix) {
+            window['_matrix_' + detailId] = matrix;
+        }
+    });
+}
+
+function toggleStockDetail(detailId) {
+    const row = document.getElementById(detailId);
+    const icon = document.getElementById('icon_' + detailId);
+    if (!row) return;
+    const isHidden = row.style.display === 'none';
+    row.style.display = isHidden ? 'table-row' : 'none';
+    if (icon) icon.className = isHidden ? 'bi bi-chevron-down' : 'bi bi-chevron-right';
+    // Lazy render radar & agent cards on first expand
+    if (isHidden && window['_matrix_' + detailId]) {
+        const matrix = window['_matrix_' + detailId];
+        setTimeout(() => {
+            renderStockRadar('radar_' + detailId, matrix);
+            renderAgentCards('agents_' + detailId, matrix);
+        }, 50);
+    }
+}
+
+function renderStockRadar(domId, matrix) {
+    const chart = echarts.init(document.getElementById(domId));
+    const agents = matrix.agents || ["TA-Agent", "FA-Agent", "CA-Agent", "SA-Agent", "MA-Agent", "RA-Agent"];
+    const indicator = agents.map(a => {
+        const short = a.replace('-Agent', '');
+        return { name: short, max: 1 };
+    });
+    const dataVal = agents.map(a => {
+        const sig = matrix.signals?.[a] || 0;
+        const conf = matrix.confidences?.[a] || 0;
+        // Normalize contribution to [0,1] for radar display
+        // signal in [-1,1], confidence in [0,1] → |sig|*conf is the "strength" of opinion
+        return Math.abs(sig) * conf;
+    });
+    chart.setOption({
+        backgroundColor: 'transparent',
+        radar: {
+            indicator,
+            shape: 'polygon',
+            splitNumber: 4,
+            axisName: { color: '#8b9bb4', fontSize: 11 },
+            splitLine: { lineStyle: { color: 'rgba(100,130,200,0.1)' } },
+            splitArea: { areaStyle: { color: ['rgba(100,130,200,0.02)', 'rgba(100,130,200,0.05)'] } },
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.15)' } },
+        },
+        series: [{
+            type: 'radar',
+            data: [{
+                value: dataVal,
+                name: 'Agent强度',
+                areaStyle: { color: 'rgba(6,182,212,0.2)' },
+                lineStyle: { color: '#06b6d4', width: 2 },
+                itemStyle: { color: '#06b6d4' },
+            }]
+        }]
+    });
+}
+
+function renderAgentCards(domId, matrix) {
+    const el = document.getElementById(domId);
+    if (!el) return;
+    const colors = {'TA-Agent':'#06b6d4','FA-Agent':'#3b82f6','CA-Agent':'#a855f7','SA-Agent':'#f97316','MA-Agent':'#eab308','RA-Agent':'#ef4444'};
+    const names = {'TA-Agent':'技术面','FA-Agent':'基本面','CA-Agent':'资金面','SA-Agent':'情绪面','MA-Agent':'宏观','RA-Agent':'风控'};
+    const agents = matrix.agents || ["TA-Agent", "FA-Agent", "CA-Agent", "SA-Agent", "MA-Agent", "RA-Agent"];
+    let html = '<div style="font-size:13px; font-weight:600; color:var(--text-primary); margin-bottom:6px;"><i class="bi bi-people" style="margin-right:4px;color:var(--accent-blue);"></i>各Agent核心观点</div>';
+    html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">';
+    agents.forEach(aid => {
+        const sig = matrix.signals?.[aid] ?? 0;
+        const conf = matrix.confidences?.[aid] ?? 0;
+        const hl = matrix.raw_highlights?.[aid] || {};
+        const sigText = sig === 1 ? '买入' : (sig === -1 ? '卖出' : '观望');
+        const sigColor = sig === 1 ? '#22c55e' : (sig === -1 ? '#ef4444' : '#eab308');
+        let hlText = '';
+        if (aid === 'TA-Agent' && hl.trend_direction) hlText = hl.trend_direction;
+        else if (aid === 'FA-Agent' && hl.fundamental_score !== undefined) hlText = `评分${hl.fundamental_score}`;
+        else if (aid === 'CA-Agent' && hl.smart_money_direction) hlText = hl.smart_money_direction;
+        else if (aid === 'SA-Agent' && hl.sentiment_index !== undefined) hlText = `情绪${hl.sentiment_index}`;
+        else if (aid === 'MA-Agent' && hl.sector_outlook) hlText = hl.sector_outlook;
+        else if (aid === 'RA-Agent' && hl.risk_level !== undefined) hlText = `风险${hl.risk_level}/5`;
+        html += `<div style="padding:8px 10px; background:var(--bg-base); border-radius:var(--radius-sm); border-left:3px solid ${colors[aid]};">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:600; font-size:12px; color:${colors[aid]};">${names[aid]}</span>
+                <span style="font-size:11px; color:${sigColor}; font-weight:600;">${sigText} ${(conf*100).toFixed(0)}%</span>
+            </div>
+            ${hlText ? `<div style="font-size:11px; color:var(--text-muted); margin-top:3px;">${hlText}</div>` : ''}
+        </div>`;
+    });
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function renderConsensusMatrix(domId, matrix) {
+    const container = document.getElementById(domId);
+    if (!container) return;
+    const chart = echarts.init(container);
+    const agents = matrix.agents || [];
+    const stocks = matrix.stocks || [];
+
+    // Guard: if no data, show placeholder
+    if (!stocks.length || !agents.length) {
+        chart.setOption({
+            backgroundColor: 'transparent',
+            title: { text: '暂无Agent共识数据', left: 'center', top: 'center', textStyle: { color: '#8b9bb4', fontSize: 14 } }
+        });
+        return;
+    }
+
+    const yLabels = stocks.map(s => s.name || s.code);
+    const xLabels = agents.map(a => a.replace('-Agent', '')).concat(['Chairman']);
+    const data = [];
+    stocks.forEach((s, y) => {
+        agents.forEach((a, x) => {
+            const sig = s.signals?.[a] ?? 0;
+            const conf = s.confidences?.[a] ?? 0;
+            // Normalize to [-1, 1] for visualMap; 0 means neutral/no signal
+            const val = sig * conf;
+            data.push([x, y, val]);
+        });
+        // Chairman column
+        const cSig = s.chairman_decision ?? 0;
+        const cConf = s.chairman_confidence ?? 0;
+        data.push([agents.length, y, cSig * cConf]);
+    });
+
+    // Build visualMap pieces for discrete coloring based on signal
+    const pieces = [
+        { min: 0.31, max: 1, color: 'rgba(34,197,94,0.85)', label: '买入' },
+        { min: 0.01, max: 0.30, color: 'rgba(34,197,94,0.40)', label: '弱买入' },
+        { min: -0.05, max: 0.05, color: 'rgba(100,130,200,0.25)', label: '观望' },
+        { min: -0.30, max: -0.01, color: 'rgba(239,68,68,0.40)', label: '弱卖出' },
+        { min: -1, max: -0.31, color: 'rgba(239,68,68,0.85)', label: '卖出' },
+    ];
+
+    chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: {
+            formatter: p => {
+                const stock = yLabels[p.data[1]];
+                const agent = xLabels[p.data[0]];
+                const s = stocks[p.data[1]];
+                const isAgent = p.data[0] < agents.length;
+                const sig = isAgent ? (s.signals?.[agents[p.data[0]]] ?? 0) : s.chairman_decision;
+                const conf = isAgent ? (s.confidences?.[agents[p.data[0]]] ?? 0) : s.chairman_confidence;
+                const sigText = sig === 1 ? '买入' : (sig === -1 ? '卖出' : '观望');
+                return `<div style="font-size:13px;"><b style="color:#e8ecf4;">${stock}</b><br/><span style="color:#8b9bb4;">${agent}</span>: <span style="color:${sig === 1 ? '#22c55e' : (sig === -1 ? '#ef4444' : '#eab308')};font-weight:600;">${sigText}</span> <span style="color:#8b9bb4;">(置信度${(conf*100).toFixed(0)}%)</span></div>`;
+            },
+            backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.3)', textStyle: { color: '#e8ecf4' }, padding: 10
+        },
+        grid: { left: '18%', right: '6%', top: '6%', bottom: '20%' },
+        xAxis: {
+            type: 'category', data: xLabels, splitArea: { show: false },
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisTick: { show: false },
+            axisLabel: { color: '#8b9bb4', fontSize: 11, interval: 0 }
+        },
+        yAxis: {
+            type: 'category', data: yLabels, splitArea: { show: false },
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisTick: { show: false },
+            axisLabel: { color: '#e8ecf4', fontSize: 12 },
+            inverse: true
+        },
+        visualMap: {
+            type: 'piecewise',
+            pieces: pieces,
+            orient: 'horizontal', left: 'center', bottom: '2%',
+            textStyle: { color: '#8b9bb4', fontSize: 10 },
+            itemWidth: 14, itemHeight: 14, itemGap: 8,
+            itemSymbol: 'rect',
+            show: true,
+        },
+        series: [{
+            type: 'heatmap',
+            data: data,
+            label: {
+                show: true,
+                formatter: p => {
+                    const v = p.data[2];
+                    if (v >= 0.3) return 'B';
+                    if (v <= -0.3) return 'S';
+                    if (v > 0.05) return 'b';
+                    if (v < -0.05) return 's';
+                    return '·';
+                },
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 'bold',
+                textShadowColor: 'rgba(0,0,0,0.5)',
+                textShadowBlur: 3
+            },
+            itemStyle: {
+                borderColor: '#0a0e1a',
+                borderWidth: 2,
+                borderRadius: 4
+            },
+            emphasis: {
+                itemStyle: {
+                    shadowBlur: 12,
+                    shadowColor: 'rgba(0,0,0,0.6)',
+                    borderColor: '#fff',
+                    borderWidth: 1
+                }
+            }
+        }]
+    });
+}
+
+function renderWeightScheme(pieDomId, badgeDomId, descDomId, scheme) {
+    const cycle = scheme.cycle || '未知';
+    const desc = scheme.description || '均衡配置';
+    const weights = scheme.weights || {};
+    document.getElementById(badgeDomId).textContent = cycle;
+    document.getElementById(descDomId).textContent = desc;
+    const chart = echarts.init(document.getElementById(pieDomId));
+    const colors = {'TA':'#06b6d4','FA':'#3b82f6','CA':'#a855f7','SA':'#f97316','MA':'#eab308','RA':'#ef4444'};
+    const data = Object.entries(weights).map(([k, v]) => ({ name: k, value: v, itemStyle: { color: colors[k] || '#ccc' } }));
+    chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'item', formatter: '{b}: {d}%', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        series: [{
+            type: 'pie', radius: ['40%', '70%'], center: ['50%', '50%'],
+            roseType: 'radius',
+            label: { color: '#8b9bb4', fontSize: 10, formatter: '{b}\n{d}%' },
+            labelLine: { lineStyle: { color: 'rgba(100,130,200,0.3)' } },
+            data
+        }]
+    });
+}
+
+function renderChairmanAdvice(domId, adviceList) {
+    const el = document.getElementById(domId);
+    if (!adviceList || !adviceList.length) {
+        el.innerHTML = '<div style="color:var(--text-muted);">暂无特别建议</div>';
+        return;
+    }
+    el.innerHTML = adviceList.map(text => {
+        let color = 'var(--accent-green)';
+        let bg = 'rgba(34,197,94,0.05)';
+        if (text.startsWith('[警告]') || text.startsWith('[风险]')) {
+            color = 'var(--accent-red)';
+            bg = 'rgba(239,68,68,0.05)';
+        } else if (text.startsWith('[观望]')) {
+            color = 'var(--accent-yellow)';
+            bg = 'rgba(245,158,11,0.05)';
+        } else if (text.startsWith('[机会]')) {
+            color = 'var(--accent-green)';
+            bg = 'rgba(34,197,94,0.05)';
+        } else if (text.startsWith('[提示]')) {
+            color = 'var(--accent-blue)';
+            bg = 'rgba(59,130,246,0.05)';
+        }
+        return `<div style="padding:8px 12px; background:${bg}; border-radius:var(--radius-sm); border-left:3px solid ${color}; margin-bottom:6px; font-size:12px;">${text}</div>`;
+    }).join('');
+}
+
+function renderScenarios(domId, scenarios) {
+    const el = document.getElementById(domId);
+    const bull = scenarios.bull || {};
+    const base = scenarios.base || {};
+    const bear = scenarios.bear || {};
+    const card = (title, prob, ret, desc, color, icon) => `
+        <div style="flex:1; padding:14px; background:var(--bg-base); border-radius:var(--radius-md); border-top:3px solid ${color}; text-align:center;">
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;"><i class="bi ${icon}"></i> ${title}</div>
+            <div style="font-size:22px; font-weight:700; color:${color};">${ret > 0 ? '+' : ''}${ret}%</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">概率 ${(prob*100).toFixed(0)}%</div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-top:6px; line-height:1.5;">${desc}</div>
+        </div>
+    `;
+    el.innerHTML = `<div style="display:flex; gap:12px;">
+        ${card('牛市情景', bull.probability||0, bull.return_pct||0, bull.description||'强势上涨', '#22c55e', 'bi-graph-up-arrow')}
+        ${card('基准情景', base.probability||0, base.return_pct||0, base.description||'正常波动', '#3b82f6', 'bi-graph-up')}
+        ${card('熊市情景', bear.probability||0, bear.return_pct||0, bear.description||'调整下行', '#ef4444', 'bi-graph-down-arrow')}
+    </div>`;
+}
+
+function renderConflicts(domId, summary) {
+    const el = document.getElementById(domId);
+    const total = summary.total_conflicts || 0;
+    const conflicts = summary.conflicts || [];
+    if (!total) {
+        el.innerHTML = '<div style="color:var(--text-muted);"><i class="bi bi-check-circle" style="color:var(--accent-green); margin-right:4px;"></i>各Agent观点基本一致，无明显冲突</div>';
+        return;
+    }
+    let html = `<div style="margin-bottom:8px; font-weight:600; color:var(--accent-yellow);"><i class="bi bi-lightning-charge"></i> 检测到 ${total} 处Agent冲突</div>`;
+    html += conflicts.map(c => `
+        <div style="padding:10px 12px; background:var(--bg-base); border-radius:var(--radius-sm); margin-bottom:8px;">
+            <div style="font-weight:600; color:var(--text-primary); font-size:13px; margin-bottom:4px;">${c.stock_name} (${c.stock_code})</div>
+            <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">${c.description}</div>
+            <div style="font-size:11px; color:var(--accent-cyan); padding:6px 8px; background:rgba(6,182,212,0.08); border-radius:var(--radius-sm);"><i class="bi bi-check2-circle"></i> ${c.resolution}</div>
+        </div>
+    `).join('');
+    el.innerHTML = html;
+}
+
+// ========== Export ==========
+
+function exportPortfolioCSV() {
+    if (!_lastPortfolioData) return;
+    const items = _lastPortfolioData.holdings_analysis || [];
+    const risk = _lastPortfolioData.portfolio_risk || {};
+    let csv = '\uFEFF股票代码,股票名称,行业,决策,置信度,当前价,建议仓位%,预期收益%,风险等级,目标价,止损价\n';
+    items.forEach(item => {
+        const fd = item.final_decision || {};
+        const ra = item.opinions?.['RA-Agent']?.raw_data || {};
+        const ind = item.data_summary?.industry || '';
+        const dec = fd.decision === 1 ? '买入' : (fd.decision === -1 ? '卖出' : '观望');
+        csv += `${item.stock_code},${item.stock_name || ''},${ind},${dec},${(fd.confidence*100).toFixed(0)}%,${item.current_price || ''},${(fd.position_pct*100).toFixed(1)}%,${(fd.expected_return_pct||0).toFixed(1)}%,${ra.risk_level || '-'},${fd.target_price||''},${fd.stop_loss||''}\n`;
+    });
+    csv += `\n组合汇总,,,,,,,,,,\n`;
+    csv += `持仓数量,${risk.total_stocks},买入,${risk.buy_signals},观望,${risk.hold_signals},卖出,${risk.sell_signals}\n`;
+    csv += `加权预期收益,${(risk.weighted_expected_return||0).toFixed(1)}%,平均风险,${(risk.avg_risk_level||0).toFixed(1)}/5,总仓位,${((risk.total_recommended_position||0)*100).toFixed(1)}%,分散度,${(risk.diversification_score||0).toFixed(0)}\n`;
+
+    const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'portfolio_analysis_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function exportPortfolioReport() {
+    if (!_lastPortfolioData) return;
+    const element = document.getElementById('portfolioResult');
+    if (!element) return;
+    const opt = {
+        margin: 10,
+        filename: 'portfolio_report_' + new Date().toISOString().slice(0,10) + '.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, backgroundColor: '#0a0e1a' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+    };
+    if (typeof html2pdf !== 'undefined') {
+        html2pdf().set(opt).from(element).save();
+    } else {
+        alert('PDF导出库加载失败');
+    }
+}
+</script>
+{% endblock %}

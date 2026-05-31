@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}历史记录{% endblock %}
+{% block content %}
+<style>
+.history-tabs { display:flex; gap:0; margin-bottom:16px; }
+.history-tab { padding:10px 24px; font-size:13px; font-weight:600; cursor:pointer; border:none; background:transparent; color:var(--text-muted); border-bottom:3px solid transparent; transition:all 0.2s; }
+.history-tab.active { color:var(--accent-cyan); border-bottom-color:var(--accent-cyan); }
+.history-tab:hover { color:var(--text-primary); }
+.history-tab .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:10px; margin-left:6px; background:rgba(100,130,200,0.12); color:var(--text-muted); }
+.history-tab.active .badge { background:rgba(6,182,212,0.15); color:var(--accent-cyan); }
+.quick-actions { display:flex; gap:4px; opacity:0; transition:opacity 0.2s; }
+tr:hover .quick-actions { opacity:1; }
+.hot-stock-bar { display:flex; align-items:center; gap:8px; margin-bottom:6px; cursor:pointer; padding:4px 6px; border-radius:4px; transition:background 0.15s; }
+.hot-stock-bar:hover { background:rgba(100,130,200,0.06); }
+.direction-badge { display:inline-block; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:600; }
+</style>
+
+<div class="mass-section">
+    <!-- Title + Actions Row -->
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:20px;">
+        <div class="history-tabs" id="historyTabs">
+            <button class="history-tab active" onclick="switchTab('diagnosis')">诊断历史 <span class="badge" id="diagCount">--</span></button>
+            <button class="history-tab" onclick="switchTab('prediction')">预测历史 <span class="badge" id="predCount">--</span></button>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="display:flex; gap:8px;">
+            <input type="text" class="mass-input" placeholder="筛选股票代码 (如: 000001)" maxlength="6" id="filterCode" style="width:190px;" onkeypress="if(event.key==='Enter')loadCurrentTab()">
+            <select class="mass-input" id="filterSignal" style="width:120px;" onchange="loadCurrentTab()">
+                <option value="">全部信号</option>
+                <option value="1">买入</option>
+                <option value="0">观望</option>
+                <option value="-1">卖出</option>
+            </select>
+            <button class="mass-btn mass-btn-primary" onclick="loadCurrentTab()"><i class="bi bi-search" style="margin-right:4px"></i>筛选</button>
+            <button class="mass-btn mass-btn-ghost" onclick="loadCurrentTab()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+    </div>
+
+    <!-- Stat Cards Row -->
+    <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; margin-bottom:16px;">
+        <div class="mass-card" style="padding:14px 16px;">
+            <div class="mass-metric-label" style="font-size:10px;">总决策数</div>
+            <div class="mass-metric-value" style="font-size:28px;" id="statTotal">--</div>
+        </div>
+        <div class="mass-card" style="padding:14px 16px;">
+            <div class="mass-metric-label" style="font-size:10px;">买入 / 观望 / 卖出</div>
+            <div style="font-size:20px; font-weight:700; margin-top:4px;">
+                <span style="color:var(--accent-green);" id="statBuy">0</span>
+                <span style="color:var(--text-muted); margin:0 4px;">/</span>
+                <span style="color:var(--accent-yellow);" id="statHold">0</span>
+                <span style="color:var(--text-muted); margin:0 4px;">/</span>
+                <span style="color:var(--accent-red);" id="statSell">0</span>
+            </div>
+        </div>
+        <div class="mass-card" style="padding:14px 16px;">
+            <div class="mass-metric-label" style="font-size:10px;">平均置信度</div>
+            <div class="mass-metric-value" style="font-size:28px; color:var(--accent-cyan);" id="statAvgConf">--</div>
+        </div>
+        <div class="mass-card" style="padding:14px 16px;">
+            <div class="mass-metric-label" style="font-size:10px;">准确率（已验证）</div>
+            <div class="mass-metric-value" style="font-size:28px; color:var(--accent-green);" id="statAccuracy">--</div>
+        </div>
+        <div class="mass-card" style="padding:14px 16px;">
+            <div class="mass-metric-label" style="font-size:10px;">最多诊断股票</div>
+            <div style="font-size:20px; font-weight:700; margin-top:4px; color:var(--text-primary);" id="statTopStock">--</div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div style="display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-graph-up" style="margin-right:4px;color:var(--accent-blue)"></i>决策趋势</div></div>
+            <div class="mass-card-body" style="padding:0;"><div id="trendChart" style="height:220px;"></div></div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-pie-chart" style="margin-right:4px;color:var(--accent-purple)"></i>信号分布</div></div>
+            <div class="mass-card-body" style="padding:0;"><div id="signalPieChart" style="height:220px;"></div></div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-fire" style="margin-right:4px;color:var(--accent-orange)"></i>热门股票</div></div>
+            <div class="mass-card-body" style="padding:10px 14px; overflow-y:auto; max-height:200px;" id="hotStocksList"></div>
+        </div>
+    </div>
+
+    <!-- Main Table -->
+    <div class="mass-card">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-list-ul" style="margin-right:4px;color:var(--accent-cyan)"></i><span id="tableTitle">诊断历史</span></div>
+            <div id="tableInfo" style="font-size:11px;color:var(--text-muted);"></div>
+        </div>
+        <div class="mass-card-body" style="padding:0; overflow:auto;">
+            <table class="mass-table" style="font-size:12px;">
+                <thead>
+                    <tr>
+                        <th style="width:50px;">ID</th>
+                        <th style="width:110px;">股票</th>
+                        <th style="width:80px;">日期</th>
+                        <th style="width:70px;">决策</th>
+                        <th style="width:65px;">置信度</th>
+                        <th style="width:65px;">仓位</th>
+                        <th style="width:80px;">预期收益</th>
+                        <th style="width:60px;">验证</th>
+                        <th style="min-width:200px;">核心因子</th>
+                        <th style="width:140px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTable">
+                    <tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:60px 0;">
+                        <i class="bi bi-hourglass-split" style="font-size:24px;display:block;margin-bottom:8px;"></i>加载中...
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="display:flex;justify-content:center;gap:8px;padding:10px;" id="tablePagination"></div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script>
+let currentTab = 'diagnosis';
+let currentPage = 0;
+let allDecisions = [];
+let allPredictions = [];
+
+function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.history-tab').forEach(t => t.classList.toggle('active', t.textContent.includes(tab === 'diagnosis' ? '诊断' : '预测')));
+    document.getElementById('filterSignal').style.display = tab === 'diagnosis' ? '' : 'none';
+    document.getElementById('tableTitle').textContent = tab === 'diagnosis' ? '诊断历史' : '预测历史';
+    currentPage = 0;
+    loadCurrentTab();
+}
+
+function loadCurrentTab() {
+    if (currentTab === 'diagnosis') loadDiagnosisHistory();
+    else loadPredictionHistory();
+}
+
+function loadDiagnosisHistory() {
+    const code = document.getElementById('filterCode').value.trim();
+    const signal = document.getElementById('filterSignal').value;
+    let url = '/api/agent/decisions/history?limit=200';
+    if (code) url += '&stock_code=' + code;
+
+    fetch(url).then(r=>r.json()).then(data=>{
+        let decisions = data.decisions || [];
+        if (signal !== '') decisions = decisions.filter(d => d.decision === parseInt(signal));
+        allDecisions = decisions;
+        document.getElementById('diagCount').textContent = decisions.length;
+        renderDiagnosisTable(decisions);
+        renderStats(decisions);
+        renderTrendChart(decisions);
+        renderSignalPie(decisions);
+        loadHotStocks();
+    }).catch(()=>{
+        document.getElementById('historyTable').innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:60px;">加载失败，请刷新重试</td></tr>';
+    });
+}
+
+function loadPredictionHistory() {
+    let url = '/api/agent/predict/history?limit=200';
+    const code = document.getElementById('filterCode').value.trim();
+    if (code) url += '&stock_code=' + code;
+
+    fetch(url).then(r=>r.json()).then(data=>{
+        const records = data.records || [];
+        allPredictions = records;
+        document.getElementById('predCount').textContent = records.length;
+        const statsEls = ['statTotal','statBuy','statHold','statSell','statAvgConf','statAccuracy','statTopStock'];
+        statsEls.forEach(id => document.getElementById(id).textContent = '--');
+        document.getElementById('statTotal').textContent = records.length;
+        if (records.length > 0) {
+            const avgConf = records.reduce((s,r) => s + (r.calibrated_confidence || r.raw_confidence || 0), 0) / records.length;
+            document.getElementById('statAvgConf').textContent = (avgConf * 100).toFixed(0) + '%';
+        }
+        renderPredictionTable(records);
+        renderPredChart(records);
+        document.getElementById('signalPieChart').innerHTML = '';
+        document.getElementById('hotStocksList').innerHTML = '';
+    });
+}
+
+function renderDiagnosisTable(decisions) {
+    const tbody = document.getElementById('historyTable');
+    document.getElementById('tableInfo').textContent = `共 ${decisions.length} 条记录`;
+    if (!decisions.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:60px;">暂无记录 — 去 <a href="/agent/trading" style="color:var(--accent-cyan);">个股诊断</a> 分析第一支股票吧</td></tr>';
+        document.getElementById('tablePagination').innerHTML = '';
+        return;
+    }
+    const perPage = 15;
+    const totalPages = Math.ceil(decisions.length / perPage);
+    const start = currentPage * perPage;
+    const page = decisions.slice(start, start + perPage);
+
+    tbody.innerHTML = page.map(d => {
+        const sigMap = {1:'<span class="mass-signal mass-signal-buy">买入</span>', '-1':'<span class="mass-signal mass-signal-sell">卖出</span>', 0:'<span class="mass-signal mass-signal-hold">观望</span>'};
+        const sig = sigMap[d.decision] || sigMap[0];
+        const code = d.stock_code;
+        const name = d.stock_name && d.stock_name !== code ? d.stock_name : code;
+        const conf = d.confidence ? (d.confidence*100).toFixed(0)+'%' : '--';
+        const pos = d.position_pct ? (d.position_pct*100).toFixed(1)+'%' : '--';
+        const ret = d.expected_return_pct ? d.expected_return_pct.toFixed(1)+'%' : '--';
+        const valid = d.validated ? '<i class="bi bi-check-circle-fill" style="color:var(--accent-green);" title="已验证"></i>' : '<i class="bi bi-circle" style="color:var(--text-muted);" title="待验证"></i>';
+        return `<tr>
+            <td style="color:var(--text-muted);">#${d.id}</td>
+            <td><a href="/agent/trading" onclick="quickDiag('${code}')" style="color:var(--accent-cyan);font-weight:600;text-decoration:none;" title="重新诊断">${name}<br><span style="font-size:10px;color:var(--text-muted);">${code}</span></a></td>
+            <td>${d.decision_date}</td>
+            <td>${sig}</td>
+            <td style="font-family:var(--font-mono);">${conf}</td>
+            <td style="font-family:var(--font-mono);">${pos}</td>
+            <td style="font-family:var(--font-mono);color:${d.expected_return_pct>0?'var(--accent-green)':'var(--accent-red)'};">${ret}</td>
+            <td>${valid}</td>
+            <td style="font-size:11px;color:var(--text-muted);">--</td>
+            <td>
+                <div class="quick-actions" style="display:flex;gap:4px;">
+                    <button class="mass-btn mass-btn-ghost" style="padding:3px 8px;font-size:10px;" onclick="quickDiag('${code}')" title="重新诊断">诊断</button>
+                    <button class="mass-btn mass-btn-ghost" style="padding:3px 8px;font-size:10px;" onclick="quickPredict('${code}')" title="预测走势">预测</button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    // Pagination
+    const pagEl = document.getElementById('tablePagination');
+    if (totalPages > 1) {
+        let html = '';
+        for (let i = 0; i < totalPages; i++) {
+            html += `<button class="mass-btn mass-btn-ghost" style="padding:4px 10px;font-size:11px;${i===currentPage?'color:var(--accent-cyan);border-color:var(--accent-cyan);':''}" onclick="currentPage=${i};loadCurrentTab()">${i+1}</button>`;
+        }
+        pagEl.innerHTML = html;
+    } else { pagEl.innerHTML = ''; }
+}
+
+function renderPredictionTable(records) {
+    const tbody = document.getElementById('historyTable');
+    document.getElementById('tableInfo').textContent = `共 ${records.length} 条预测`;
+    if (!records.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:60px;">暂无预测 — 去 <a href="/agent/trading" style="color:var(--accent-cyan);">个股诊断</a> 分析后即可预测</td></tr>';
+        return;
+    }
+    const perPage = 15;
+    const page = records.slice(currentPage * perPage, (currentPage+1) * perPage);
+
+    tbody.innerHTML = page.map(r => {
+        const dirMap = {'上涨':'<span style="color:var(--accent-green);font-weight:700;">▲ 上涨</span>','下跌':'<span style="color:var(--accent-red);font-weight:700;">▼ 下跌</span>','震荡':'<span style="color:var(--accent-yellow);font-weight:700;">≡ 震荡</span>','不确定':'<span style="color:var(--text-muted);">-- 不确定</span>'};
+        const dir = dirMap[r.predicted_direction] || r.predicted_direction;
+        const conf = r.calibrated_confidence ? (r.calibrated_confidence*100).toFixed(0)+'%' : '--';
+        const target = r.target_price_low && r.target_price_high ? `${r.target_price_low}-${r.target_price_high}` : '--';
+        return `<tr>
+            <td style="color:var(--text-muted);">#${r.id}</td>
+            <td><span style="color:var(--text-primary);font-weight:600;">${r.stock_name||r.stock_code}</span><br><span style="font-size:10px;color:var(--text-muted);">${r.stock_code}</span></td>
+            <td>${r.prediction_time?.slice(0,10)||'--'}</td>
+            <td>${dir}</td>
+            <td style="font-family:var(--font-mono);">${conf}</td>
+            <td style="font-family:var(--font-mono);">${r.horizon||'--'}</td>
+            <td style="font-family:var(--font-mono);">${target}</td>
+            <td>${r.validated ? '<i class="bi bi-check-circle-fill" style="color:var(--accent-green);"></i>' : '<i class="bi bi-circle" style="color:var(--text-muted);"></i>'}</td>
+            <td style="font-size:11px;color:var(--text-muted);">${r.risk_tolerance||'--'} / ${r.investment_style||'--'}</td>
+            <td><div class="quick-actions" style="display:flex;gap:4px;">
+                <button class="mass-btn mass-btn-ghost" style="padding:3px 8px;font-size:10px;" onclick="quickDiag('${r.stock_code}')">诊断</button>
+                <button class="mass-btn mass-btn-ghost" style="padding:3px 8px;font-size:10px;" onclick="quickPredict('${r.stock_code}')">预测</button>
+            </div></td>
+        </tr>`;
+    }).join('');
+}
+
+function renderStats(decisions) {
+    document.getElementById('statTotal').textContent = decisions.length;
+    const buy = decisions.filter(d => d.decision === 1).length;
+    const hold = decisions.filter(d => d.decision === 0).length;
+    const sell = decisions.filter(d => d.decision === -1).length;
+    document.getElementById('statBuy').textContent = buy;
+    document.getElementById('statHold').textContent = hold;
+    document.getElementById('statSell').textContent = sell;
+    document.getElementById('statAvgConf').textContent = decisions.length ? (decisions.reduce((s,d)=>s+(d.confidence||0),0)/decisions.length*100).toFixed(0)+'%' : '--';
+    document.getElementById('statAccuracy').textContent = decisions.filter(d=>d.validated).length + ' 条已验证';
+    const codes = {};
+    decisions.forEach(d => { const c = d.stock_code; codes[c] = (codes[c]||0)+1; });
+    const top = Object.entries(codes).sort((a,b)=>b[1]-a[1])[0];
+    document.getElementById('statTopStock').textContent = top ? top[0] : '--';
+}
+
+function renderTrendChart(decisions) {
+    const chart = echarts.init(document.getElementById('trendChart'));
+    const recent = decisions.slice(0, 30).reverse();
+    const dates = recent.map(d => d.decision_date);
+    const confs = recent.map(d => (d.confidence||0)*100);
+    chart.setOption({
+        backgroundColor:'transparent',
+        tooltip:{trigger:'axis',backgroundColor:'rgba(22,31,58,0.95)',borderColor:'rgba(100,130,200,0.2)',textStyle:{color:'#e8ecf4'}},
+        grid:{left:'6%',right:'4%',top:'10%',bottom:'12%'},
+        xAxis:{type:'category',data:dates,axisLine:{lineStyle:{color:'rgba(100,130,200,0.2)'}},axisLabel:{color:'#4a5a78',fontSize:8,rotate:30}},
+        yAxis:{type:'value',min:0,max:100,axisLine:{lineStyle:{color:'rgba(100,130,200,0.2)'}},axisLabel:{color:'#4a5a78',formatter:'{value}%'},splitLine:{lineStyle:{color:'rgba(100,130,200,0.06)'}}},
+        series:[{type:'line',data:confs,smooth:true,showSymbol:true,symbolSize:5,
+            lineStyle:{color:'#3b82f6',width:2},
+            areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(59,130,246,0.2)'},{offset:1,color:'rgba(59,130,246,0)'}])},
+            itemStyle:{color:'#3b82f6'}}]
+    });
+}
+
+function renderSignalPie(decisions) {
+    const chart = echarts.init(document.getElementById('signalPieChart'));
+    const buy = decisions.filter(d=>d.decision===1).length;
+    const hold = decisions.filter(d=>d.decision===0).length;
+    const sell = decisions.filter(d=>d.decision===-1).length;
+    chart.setOption({
+        backgroundColor:'transparent',
+        tooltip:{trigger:'item',backgroundColor:'rgba(22,31,58,0.95)',borderColor:'rgba(100,130,200,0.2)',textStyle:{color:'#e8ecf4'},formatter:'{b}: {c} ({d}%)'},
+        series:[{type:'pie',radius:['50%','75%'],center:['50%','50%'],avoidLabelOverlap:false,
+            label:{show:true,position:'outside',color:'#6b7d99',fontSize:10,formatter:'{b}\n{d}%'},
+            data:[
+                {value:buy,name:'买入',itemStyle:{color:'#22c55e'}},
+                {value:hold,name:'观望',itemStyle:{color:'#eab308'}},
+                {value:sell,name:'卖出',itemStyle:{color:'#ef4444'}}
+            ].filter(d=>d.value>0)}]
+    });
+}
+
+function renderPredChart(records) {
+    const chart = echarts.init(document.getElementById('trendChart'));
+    const directions = {};
+    records.forEach(r => { const d = r.predicted_direction; directions[d] = (directions[d]||0)+1; });
+    chart.setOption({
+        backgroundColor:'transparent',
+        tooltip:{trigger:'item',backgroundColor:'rgba(22,31,58,0.95)',borderColor:'rgba(100,130,200,0.2)',textStyle:{color:'#e8ecf4'}},
+        series:[{type:'pie',radius:['50%','75%'],center:['50%','50%'],
+            label:{show:true,color:'#6b7d99',fontSize:10,formatter:'{b}\n{d}%'},
+            data:[
+                {value:directions['上涨']||0,name:'上涨',itemStyle:{color:'#22c55e'}},
+                {value:directions['震荡']||0,name:'震荡',itemStyle:{color:'#eab308'}},
+                {value:directions['下跌']||0,name:'下跌',itemStyle:{color:'#ef4444'}},
+                {value:directions['不确定']||0,name:'不确定',itemStyle:{color:'#6b7d99'}}
+            ].filter(d=>d.value>0)}]
+    });
+}
+
+function loadHotStocks() {
+    fetch('/api/agent/stats').then(r=>r.json()).then(data=>{
+        const stocks = data.hot_stocks || [];
+        const max = stocks.length ? stocks[0].count : 1;
+        document.getElementById('hotStocksList').innerHTML = stocks.length ? stocks.map((s,i) => `
+            <div class="hot-stock-bar" onclick="quickDiag('${s.stock_code}')" title="点击诊断 ${s.stock_name||s.stock_code}">
+                <span style="font-size:10px;color:var(--text-muted);width:20px;">#${i+1}</span>
+                <span style="font-size:12px;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.stock_name||s.stock_code}</span>
+                <span style="font-size:10px;color:var(--text-muted);">${s.stock_code}</span>
+                <div style="width:${s.count/max*80}px;height:6px;background:var(--accent-cyan);border-radius:3px;opacity:0.6;"></div>
+                <span style="font-size:10px;color:var(--accent-cyan);width:30px;text-align:right;">${s.count}次</span>
+            </div>
+        `).join('') : '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px;">暂无数据</div>';
+    });
+}
+
+function quickDiag(code) {
+    sessionStorage.setItem('quickDiagnoseCode', code);
+    window.location.href = '/agent/trading';
+}
+
+function quickPredict(code) {
+    sessionStorage.setItem('quickPredictCode', code);
+    window.location.href = '/agent/trading';
+}
+
+// On trading page, pick up the quick-diagnose code
+if (window.location.pathname === '/agent/trading') {
+    const code = sessionStorage.getItem('quickDiagnoseCode') || sessionStorage.getItem('quickPredictCode');
+    if (code) {
+        sessionStorage.removeItem('quickDiagnoseCode');
+        sessionStorage.removeItem('quickPredictCode');
+        setTimeout(() => {
+            const input = document.getElementById('stockInput');
+            if (input) { input.value = code; startStreamDiagnosis(); }
+        }, 500);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadDiagnosisHistory(); loadHotStocks(); });
+</script>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}研报生成{% endblock %}
+{% block content %}
+<div class="mass-section">
+    <div class="mass-card" style="padding:20px 24px;">
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+            <div style="font-size:var(--font-size-lg); font-weight:600;"><i class="bi bi-file-earmark-text" style="margin-right:6px;color:var(--accent-blue)"></i>智能研报生成</div>
+            <input type="text" class="mass-input" placeholder="股票代码" style="width:140px;" maxlength="6" id="rCode">
+            <button class="mass-btn mass-btn-primary" onclick="generateReport()">生成研报</button>
+        </div>
+    </div>
+</div>
+
+<div id="reportArea" style="display:none; margin-top:24px;">
+    <div class="mass-card" id="reportCard">
+        <div class="mass-card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="mass-card-title"><i class="bi bi-journal-text" style="margin-right:6px;color:var(--accent-cyan)"></i>投研报告</div>
+            <div style="display:flex; gap:8px;">
+                <button class="mass-btn mass-btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="copyReport()"><i class="bi bi-clipboard" style="margin-right:4px"></i>复制</button>
+                <button class="mass-btn mass-btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="downloadPDF()"><i class="bi bi-file-earmark-pdf" style="margin-right:4px"></i>PDF</button>
+            </div>
+        </div>
+        <div class="mass-card-body">
+            <div id="reportBody" style="font-size:13px; line-height:1.8; color:var(--text-secondary);"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function generateReport() {
+    const code = document.getElementById('rCode').value.trim();
+    if (!code) { alert('请输入股票代码'); return; }
+
+    fetch('/api/agent/diagnose', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ stock_code: code })
+    })
+    .then(r=>r.json())
+    .then(data => {
+        document.getElementById('reportArea').style.display = 'block';
+        const fd = data.final_decision || {};
+        const ops = data.opinions || {};
+        const sigText = fd.decision === 1 ? '买入' : (fd.decision === -1 ? '卖出' : '观望');
+
+        let html = `<h2 style="color:var(--text-primary); margin-bottom:8px;">${data.stock_name || code} (${code}) 投研报告</h2>`;
+        html += `<div style="font-size:11px; color:var(--text-muted); margin-bottom:24px;">生成时间: ${data.decision_date} ${data.decision_time} | MASS v2.0</div>`;
+        html += `<div style="padding:16px; background:var(--bg-surface); border-radius:var(--radius-md); margin-bottom:24px; border-left:4px solid ${fd.decision===1?'#22c55e':(fd.decision===-1?'#ef4444':'#eab308')};">`;
+        html += `<div style="font-size:24px; font-weight:700; color:${fd.decision===1?'#22c55e':(fd.decision===-1?'#ef4444':'#eab308')};">${sigText} (置信度 ${(fd.confidence*100).toFixed(0)}%)</div>`;
+        html += `<div style="display:flex; gap:24px; margin-top:12px; flex-wrap:wrap;">`;
+        html += `<div><span style="color:var(--text-muted);">建议仓位</span> <b style="color:var(--text-primary);">${(fd.position_pct*100).toFixed(1)}%</b></div>`;
+        html += `<div><span style="color:var(--text-muted);">目标价</span> <b style="color:var(--text-primary);">¥${fd.target_price||'--'}</b></div>`;
+        html += `<div><span style="color:var(--text-muted);">止损价</span> <b style="color:var(--text-primary);">¥${fd.stop_loss||'--'}</b></div>`;
+        html += `<div><span style="color:var(--text-muted);">预期收益</span> <b style="color:var(--accent-green);">${fd.expected_return_pct||0}%</b></div>`;
+        html += `</div></div>`;
+
+        html += `<h3 style="color:var(--text-primary); margin:20px 0 12px;">一、各维度分析</h3>`;
+        Object.entries(ops).forEach(([id, op]) => {
+            const sig = op.signal === 1 ? '买入' : (op.signal === -1 ? '卖出' : '观望');
+            const colors = {'TA-Agent':'#06b6d4','FA-Agent':'#3b82f6','CA-Agent':'#a855f7','SA-Agent':'#f97316','MA-Agent':'#eab308','RA-Agent':'#ef4444'};
+            html += `<div style="margin-bottom:16px; padding:12px; background:var(--bg-surface); border-radius:var(--radius-sm);">`;
+            html += `<div style="font-weight:600; color:${colors[id]||'#e8ecf4'};">${id}: ${sig} (置信度 ${(op.confidence*100).toFixed(0)}%)</div>`;
+            html += `<div style="margin-top:4px; color:var(--text-secondary);">${op.reasoning}</div>`;
+            if (op.key_factors?.length) html += `<div style="margin-top:4px;">${op.key_factors.map(f=>`<span class="mass-tag mass-tag-factor">${f}</span>`).join('')}</div>`;
+            html += `</div>`;
+        });
+
+        html += `<h3 style="color:var(--text-primary); margin:20px 0 12px;">二、Chairman综合决策</h3>`;
+        html += `<div style="padding:12px; background:var(--bg-surface); border-radius:var(--radius-md); line-height:1.8;">${fd.reasoning || ''}</div>`;
+
+        if (fd.consensus_factors?.length) {
+            html += `<h3 style="color:var(--text-primary); margin:20px 0 12px;">三、共识因子</h3>`;
+            html += `<div>${fd.consensus_factors.map(f=>`<span class="mass-tag mass-tag-success">${f}</span>`).join('')}</div>`;
+        }
+
+        if (fd.execution_plan?.length) {
+            html += `<h3 style="color:var(--text-primary); margin:20px 0 12px;">四、交易计划</h3>`;
+            html += `<ol style="padding-left:20px; color:var(--text-secondary);">`;
+            fd.execution_plan.forEach(p => html += `<li style="margin-bottom:4px;">${p}</li>`);
+            html += `</ol>`;
+        }
+
+        html += `<div style="margin-top:32px; padding-top:16px; border-top:1px solid var(--border-subtle); font-size:11px; color:var(--text-muted);">免责声明：本报告仅供参考，不构成投资建议。股市有风险，投资需谨慎。</div>`;
+
+        document.getElementById('reportBody').innerHTML = html;
+    });
+}
+
+function copyReport() {
+    const text = document.getElementById('reportBody').innerText;
+    navigator.clipboard.writeText(text).then(() => alert('已复制到剪贴板'));
+}
+
+function downloadPDF() {
+    const element = document.getElementById('reportCard');
+    html2pdf().set({ margin:10, filename:'MASS_Report.pdf' }).from(element).save();
+}
+</script>
+{% endblock %}

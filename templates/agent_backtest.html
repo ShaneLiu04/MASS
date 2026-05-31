@@ -1,0 +1,949 @@
+{% extends "base.html" %}
+{% block title %}量化回测{% endblock %}
+{% block content %}
+
+<!-- ========== Control Panel ========== -->
+<div class="mass-section">
+    <div class="mass-card" style="padding:20px 24px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+            <div style="font-size:var(--font-size-lg); font-weight:600;">
+                <i class="bi bi-bar-chart-line" style="margin-right:6px;color:var(--accent-blue)"></i>策略回测
+            </div>
+            <div style="font-size:12px; color:var(--text-muted);">基于真实历史K线数据的多策略回测引擎</div>
+        </div>
+
+        <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">股票代码</div>
+                <input type="text" class="mass-input" id="btCode" value="000001" maxlength="6" style="width:100px; text-align:center; font-family:var(--font-mono);">
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">策略</div>
+                <select class="mass-input" id="btStrategy" style="width:160px;">
+                    <option value="ma_cross">MA均线交叉</option>
+                    <option value="momentum_rsi">RSI动量</option>
+                    <option value="macd_signal">MACD信号</option>
+                    <option value="bollinger_breakout">布林带突破</option>
+                    <option value="multi_factor">多因子共振</option>
+                </select>
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">开始日期</div>
+                <input type="date" class="mass-input" id="btStart" style="width:140px;">
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">结束日期</div>
+                <input type="date" class="mass-input" id="btEnd" style="width:140px;">
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">初始资金</div>
+                <input type="number" class="mass-input" id="btCapital" value="100000" step="10000" style="width:120px;">
+            </div>
+            <button class="mass-btn mass-btn-primary" onclick="runBacktest()">
+                <i class="bi bi-play-fill" style="margin-right:4px"></i>运行回测
+            </button>
+            <button class="mass-btn mass-btn-ghost" onclick="toggleCompareMode()" id="btCompareBtn">
+                <i class="bi bi-layers" style="margin-right:4px"></i>策略对比
+            </button>
+        </div>
+
+        <!-- Advanced Params -->
+        <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border-subtle);">
+            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; font-size:12px;">
+                <label style="display:flex; align-items:center; gap:6px; color:var(--text-secondary);">
+                    <input type="checkbox" id="btIncludeLLM" checked style="accent-color:var(--accent-blue);">
+                    包含LLM预测与解读
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; color:var(--text-secondary);">
+                    手续费率 <input type="number" class="mass-input" id="btCommission" value="0.0003" step="0.0001" style="width:70px; padding:2px 6px; font-size:11px;">
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; color:var(--text-secondary);">
+                    止损 <input type="number" class="mass-input" id="btStopLoss" value="8" step="1" style="width:50px; padding:2px 6px; font-size:11px;">%
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; color:var(--text-secondary);">
+                    止盈 <input type="number" class="mass-input" id="btTakeProfit" value="20" step="5" style="width:50px; padding:2px 6px; font-size:11px;">%
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== Compare Mode Panel ========== -->
+<div id="comparePanel" style="display:none;">
+    <div class="mass-card" style="padding:16px 20px; margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:10px; color:var(--accent-cyan);">
+            <i class="bi bi-layers" style="margin-right:4px"></i>策略对比模式（选择2-3个策略）
+        </div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap;" id="compareStrategyChecks">
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                <input type="checkbox" value="ma_cross" class="compare-check"> MA均线交叉
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                <input type="checkbox" value="momentum_rsi" class="compare-check"> RSI动量
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                <input type="checkbox" value="macd_signal" class="compare-check"> MACD信号
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                <input type="checkbox" value="bollinger_breakout" class="compare-check"> 布林带突破
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                <input type="checkbox" value="multi_factor" class="compare-check"> 多因子共振
+            </label>
+        </div>
+        <div style="margin-top:10px;">
+            <button class="mass-btn mass-btn-primary" style="padding:6px 14px; font-size:12px;" onclick="runCompare()">
+                <i class="bi bi-play-fill" style="margin-right:4px"></i>运行对比
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== Loading Area ========== -->
+<div id="btLoading" class="mass-loading" style="display:none;">
+    <div class="mass-loading-spinner"></div>
+    <div class="mass-loading-text">
+        正在执行回测<span class="mass-loading-dots"></span>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted); margin-top:8px;" id="btLoadingDetail">获取历史K线数据...</div>
+    <div class="mass-loading-stages" style="margin-top:6px;" id="btLoadingStages"></div>
+    <div style="font-size:11px; color:var(--text-secondary); margin-top:4px; opacity:0.7;">
+        <i class="bi bi-clock-history" style="margin-right:4px;"></i>预计耗时 3-15 秒，取决于策略复杂度与数据量
+    </div>
+</div>
+
+<!-- ========== Result Area ========== -->
+<div id="backtestResult" style="display:none;">
+
+    <!-- Metric Cards -->
+    <div class="mass-grid mass-grid-4" style="margin-bottom:16px;">
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value up" id="btTotalRet">--</div>
+                <div class="mass-metric-label">累计收益</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="btSharpe">--</div>
+                <div class="mass-metric-label">夏普比率</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value down" id="btMaxDD">--</div>
+                <div class="mass-metric-label">最大回撤</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="btWinRate">--</div>
+                <div class="mass-metric-label">胜率</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Secondary Metrics -->
+    <div class="mass-grid mass-grid-4" style="margin-bottom:16px;">
+        <div class="mass-card" style="padding:12px 16px;">
+            <div style="font-size:11px; color:var(--text-muted);">买入持有收益</div>
+            <div style="font-size:18px; font-weight:700; color:var(--text-secondary); margin-top:4px;" id="btBuyHold">--</div>
+        </div>
+        <div class="mass-card" style="padding:12px 16px;">
+            <div style="font-size:11px; color:var(--text-muted);">超额收益</div>
+            <div style="font-size:18px; font-weight:700; color:var(--accent-cyan); margin-top:4px;" id="btExcess">--</div>
+        </div>
+        <div class="mass-card" style="padding:12px 16px;">
+            <div style="font-size:11px; color:var(--text-muted);">年化波动率</div>
+            <div style="font-size:18px; font-weight:700; color:var(--text-secondary); margin-top:4px;" id="btVolatility">--</div>
+        </div>
+        <div class="mass-card" style="padding:12px 16px;">
+            <div style="font-size:11px; color:var(--text-muted);">交易次数</div>
+            <div style="font-size:18px; font-weight:700; color:var(--text-secondary); margin-top:4px;" id="btTradeCount">--</div>
+        </div>
+    </div>
+
+    <!-- Charts Row 1: Return + Drawdown -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:16px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-graph-up-arrow" style="margin-right:6px;color:var(--accent-green)"></i>累计收益曲线</div>
+                <div style="font-size:11px; color:var(--text-muted);" id="btReturnSubtitle"></div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="btReturnChart" class="mass-chart-container lg" style="height:360px;"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-arrow-down-circle" style="margin-right:6px;color:var(--accent-red)"></i>回撤分析</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="btDrawdownChart" class="mass-chart-container lg" style="height:360px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 2: Monthly Heatmap -->
+    <div class="mass-card" style="margin-bottom:16px;">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-calendar3" style="margin-right:6px;color:var(--accent-yellow)"></i>月度收益热力图</div>
+        </div>
+        <div class="mass-card-body" style="padding:0;">
+            <div id="btHeatmapChart" class="mass-chart-container" style="height:240px;"></div>
+        </div>
+    </div>
+
+    <!-- Trade Analysis -->
+    <div class="mass-card" style="margin-bottom:16px;">
+        <div class="mass-card-header" style="cursor:pointer;" onclick="toggleSection('tradeAnalysisBody', 'tradeAnalysisToggle')">
+            <div class="mass-card-title"><i class="bi bi-receipt" style="margin-right:6px;color:var(--accent-purple)"></i>交易明细与分析</div>
+            <div style="display:flex; gap:12px; align-items:center;">
+                <span style="font-size:11px; color:var(--text-muted);" id="btTradeSummary"></span>
+                <i class="bi bi-chevron-down" id="tradeAnalysisToggle" style="color:var(--text-muted); transition:transform 0.2s;"></i>
+            </div>
+        </div>
+        <div class="mass-card-body" id="tradeAnalysisBody" style="display:none;">
+            <!-- Trade Stats -->
+            <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-bottom:16px; padding:12px; background:var(--bg-surface); border-radius:var(--radius-sm);">
+                <div style="text-align:center;">
+                    <div style="font-size:11px; color:var(--text-muted);">总交易</div>
+                    <div style="font-size:18px; font-weight:700; color:var(--text-secondary);" id="btStatTotal">--</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:11px; color:var(--text-muted);">平均持仓</div>
+                    <div style="font-size:18px; font-weight:700; color:var(--text-secondary);" id="btStatHolding">--</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:11px; color:var(--text-muted);">盈亏比</div>
+                    <div style="font-size:18px; font-weight:700; color:var(--text-secondary);" id="btStatFactor">--</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:11px; color:var(--text-muted);">盈亏总额</div>
+                    <div style="font-size:18px; font-weight:700; color:var(--text-secondary);" id="btStatGross">--</div>
+                </div>
+            </div>
+            <!-- Trade Table -->
+            <div style="overflow-x:auto;">
+                <table style="width:100%; font-size:12px; border-collapse:collapse;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border-subtle);">
+                            <th style="text-align:left; padding:8px; color:var(--text-muted); font-weight:500;">日期</th>
+                            <th style="text-align:center; padding:8px; color:var(--text-muted); font-weight:500;">类型</th>
+                            <th style="text-align:right; padding:8px; color:var(--text-muted); font-weight:500;">价格</th>
+                            <th style="text-align:right; padding:8px; color:var(--text-muted); font-weight:500;">数量</th>
+                            <th style="text-align:right; padding:8px; color:var(--text-muted); font-weight:500;">金额</th>
+                            <th style="text-align:right; padding:8px; color:var(--text-muted); font-weight:500;">手续费</th>
+                            <th style="text-align:left; padding:8px; color:var(--text-muted); font-weight:500;">原因</th>
+                        </tr>
+                    </thead>
+                    <tbody id="btTradeTable"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM Explanation -->
+    <div class="mass-card" style="margin-bottom:16px; border-left:3px solid var(--accent-purple);" id="btLLMExplanationCard">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-stars" style="margin-right:6px;color:var(--accent-purple)"></i>AI策略解读</div>
+            <span class="mass-tag" style="background:rgba(168,85,247,0.12); color:var(--accent-purple); font-size:10px;">LLM生成</span>
+        </div>
+        <div class="mass-card-body" style="padding:16px 20px; font-size:13px; line-height:1.8; color:var(--text-secondary);" id="btLLMExplanationText">
+            运行回测后将在此展示AI生成的策略表现解读...
+        </div>
+    </div>
+
+    <!-- LLM Prediction -->
+    <div class="mass-card" style="margin-bottom:16px; border-left:3px solid var(--accent-cyan); display:none;" id="btLLMPredictionCard">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-crystal-ball" style="margin-right:6px;color:var(--accent-cyan)"></i>AI走势预测</div>
+            <span class="mass-tag" style="background:rgba(6,182,212,0.12); color:var(--accent-cyan); font-size:10px;">LLM预测</span>
+        </div>
+        <div class="mass-card-body" style="padding:16px 20px;">
+            <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:16px;">
+                <div style="text-align:center; min-width:80px;">
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">预测方向</div>
+                    <div style="font-size:22px; font-weight:700; margin-top:6px;" id="btPredDirection">--</div>
+                </div>
+                <div style="text-align:center; min-width:80px;">
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">置信度</div>
+                    <div style="font-size:22px; font-weight:700; color:var(--accent-cyan); margin-top:6px;" id="btPredConfidence">--</div>
+                </div>
+                <div style="text-align:center; min-width:80px;">
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">目标价</div>
+                    <div style="font-size:22px; font-weight:700; color:var(--accent-green); margin-top:6px;" id="btPredTarget">--</div>
+                </div>
+                <div style="text-align:center; min-width:80px;">
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">止损价</div>
+                    <div style="font-size:22px; font-weight:700; color:var(--accent-red); margin-top:6px;" id="btPredStop">--</div>
+                </div>
+                <div style="text-align:center; min-width:80px;">
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">风险收益比</div>
+                    <div style="font-size:22px; font-weight:700; color:var(--text-secondary); margin-top:6px;" id="btPredRR">--</div>
+                </div>
+            </div>
+            <!-- Probability Bar -->
+            <div style="margin-bottom:12px;">
+                <div style="display:flex; height:8px; border-radius:4px; overflow:hidden; background:rgba(100,130,200,0.08); margin-bottom:6px;">
+                    <div id="btPredBarUp" style="height:100%; background:var(--accent-green); transition:width 0.5s;"></div>
+                    <div id="btPredBarHold" style="height:100%; background:var(--accent-yellow); transition:width 0.5s;"></div>
+                    <div id="btPredBarDown" style="height:100%; background:var(--accent-red); transition:width 0.5s;"></div>
+                </div>
+                <div style="display:flex; gap:16px; font-size:11px;">
+                    <span style="color:var(--accent-green);">▲ 上涨 <b id="btPredUpNum">0</b>%</span>
+                    <span style="color:var(--accent-yellow);">— 震荡 <b id="btPredHoldNum">0</b>%</span>
+                    <span style="color:var(--accent-red);">▼ 下跌 <b id="btPredDownNum">0</b>%</span>
+                </div>
+            </div>
+            <!-- Key Drivers & Risks -->
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                <div>
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">核心驱动</div>
+                    <div id="btPredDrivers" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+                </div>
+                <div>
+                    <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">风险因素</div>
+                    <div id="btPredRisks" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+                </div>
+            </div>
+            <!-- Reasoning -->
+            <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border-subtle);">
+                <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">推理过程</div>
+                <div style="font-size:12px; color:var(--text-secondary); line-height:1.7;" id="btPredReasoning">--</div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ========== Compare Result Area ========== -->
+<div id="compareResult" style="display:none;">
+    <div class="mass-card" style="padding:16px 20px; margin-bottom:16px;">
+        <div style="font-size:var(--font-size-lg); font-weight:600; margin-bottom:12px;">
+            <i class="bi bi-layers" style="margin-right:6px;color:var(--accent-cyan)"></i>策略对比结果
+        </div>
+        <!-- Compare Table -->
+        <div style="overflow-x:auto; margin-bottom:16px;">
+            <table style="width:100%; font-size:13px; border-collapse:collapse;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border-subtle);">
+                        <th style="text-align:left; padding:10px; color:var(--text-muted);">策略</th>
+                        <th style="text-align:right; padding:10px; color:var(--text-muted);">累计收益</th>
+                        <th style="text-align:right; padding:10px; color:var(--text-muted);">夏普比率</th>
+                        <th style="text-align:right; padding:10px; color:var(--text-muted);">最大回撤</th>
+                        <th style="text-align:right; padding:10px; color:var(--text-muted);">胜率</th>
+                        <th style="text-align:right; padding:10px; color:var(--text-muted);">交易次数</th>
+                        <th style="text-align:right; padding:10px; color:var(--text-muted);">超额收益</th>
+                    </tr>
+                </thead>
+                <tbody id="btCompareTable"></tbody>
+            </table>
+        </div>
+        <!-- Compare Chart -->
+        <div id="btCompareChart" style="height:360px;"></div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _btReturnChart = null;
+let _btDrawdownChart = null;
+let _btHeatmapChart = null;
+let _btCompareChart = null;
+let _compareMode = false;
+
+// Set default dates
+document.addEventListener('DOMContentLoaded', () => {
+    const end = new Date();
+    const start = new Date();
+    start.setFullYear(start.getFullYear() - 1);
+    document.getElementById('btEnd').value = end.toISOString().split('T')[0];
+    document.getElementById('btStart').value = start.toISOString().split('T')[0];
+});
+
+function toggleCompareMode() {
+    _compareMode = !_compareMode;
+    const panel = document.getElementById('comparePanel');
+    const result = document.getElementById('backtestResult');
+    const cmpResult = document.getElementById('compareResult');
+    const btn = document.getElementById('btCompareBtn');
+
+    if (_compareMode) {
+        panel.style.display = 'block';
+        result.style.display = 'none';
+        cmpResult.style.display = 'none';
+        btn.classList.add('mass-btn-primary');
+        btn.classList.remove('mass-btn-ghost');
+    } else {
+        panel.style.display = 'none';
+        btn.classList.remove('mass-btn-primary');
+        btn.classList.add('mass-btn-ghost');
+    }
+}
+
+function toggleSection(bodyId, toggleId) {
+    const body = document.getElementById(bodyId);
+    const toggle = document.getElementById(toggleId);
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        toggle.style.transform = 'rotate(180deg)';
+    } else {
+        body.style.display = 'none';
+        toggle.style.transform = 'rotate(0deg)';
+    }
+}
+
+function runBacktest() {
+    const stockCode = document.getElementById('btCode').value.trim();
+    if (!stockCode || stockCode.length !== 6) {
+        alert('请输入6位股票代码');
+        return;
+    }
+
+    const strategy = document.getElementById('btStrategy').value;
+    const startDate = document.getElementById('btStart').value;
+    const endDate = document.getElementById('btEnd').value;
+    const initialCapital = parseFloat(document.getElementById('btCapital').value) || 100000;
+    const commissionRate = parseFloat(document.getElementById('btCommission').value) || 0.0003;
+    const stopLoss = parseFloat(document.getElementById('btStopLoss').value) || 8;
+    const takeProfit = parseFloat(document.getElementById('btTakeProfit').value) || 20;
+    const includeLLM = document.getElementById('btIncludeLLM').checked;
+
+    // Show loading with stage carousel
+    document.getElementById('btLoading').style.display = 'flex';
+    document.getElementById('backtestResult').style.display = 'none';
+    document.getElementById('compareResult').style.display = 'none';
+    document.getElementById('btLoadingDetail').textContent = '获取历史K线数据并执行回测...';
+    startBacktestLoadingStages(includeLLM);
+
+    fetch('/api/agent/backtest/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stock_code: stockCode,
+            strategy: strategy,
+            start_date: startDate,
+            end_date: endDate,
+            initial_capital: initialCapital,
+            commission_rate: commissionRate,
+            stop_loss_pct: stopLoss / 100,
+            take_profit_pct: takeProfit / 100,
+            include_llm_explanation: includeLLM,
+            include_llm_prediction: includeLLM,
+            prediction_horizon: 'short',
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        stopBacktestLoadingStages();
+        document.getElementById('btLoading').style.display = 'none';
+
+        if (data.code !== 'OK') {
+            alert('回测失败: ' + (data.error || data.message || '未知错误'));
+            return;
+        }
+
+        document.getElementById('backtestResult').style.display = 'block';
+        renderBacktestResult(data);
+    })
+    .catch(err => {
+        stopBacktestLoadingStages();
+        document.getElementById('btLoading').style.display = 'none';
+        alert('请求失败: ' + err.message);
+    });
+}
+
+let btLoadingInterval = null;
+function startBacktestLoadingStages(includeLLM) {
+    stopBacktestLoadingStages();
+    const stages = includeLLM
+        ? ['获取历史K线数据...', '计算技术指标（MA/RSI/MACD/布林带）...', '执行策略信号判定...', 'Agent加权决策分析...', 'LLM预测与策略解读...', '生成回测报告与验证...']
+        : ['获取历史K线数据...', '计算技术指标（MA/RSI/MACD/布林带）...', '执行策略信号判定...', '统计收益与风险指标...', '生成回测报告...'];
+    let idx = 0;
+    const el = document.getElementById('btLoadingStages');
+    el.textContent = stages[0];
+    el.style.opacity = '1';
+    btLoadingInterval = setInterval(() => {
+        idx = (idx + 1) % stages.length;
+        el.style.opacity = '0.3';
+        setTimeout(() => { el.textContent = stages[idx]; el.style.opacity = '1'; }, 150);
+    }, 2200);
+}
+function stopBacktestLoadingStages() {
+    if (btLoadingInterval) { clearInterval(btLoadingInterval); btLoadingInterval = null; }
+    const el = document.getElementById('btLoadingStages');
+    if (el) el.textContent = '';
+}
+
+function renderBacktestResult(data) {
+    const m = data.metrics;
+    const period = data.period;
+
+    // Metrics
+    const totalRetColor = m.total_return >= 0 ? 'up' : 'down';
+    document.getElementById('btTotalRet').className = 'mass-metric-value ' + totalRetColor;
+    document.getElementById('btTotalRet').textContent = (m.total_return >= 0 ? '+' : '') + m.total_return.toFixed(2) + '%';
+    document.getElementById('btSharpe').textContent = m.sharpe_ratio.toFixed(2);
+    document.getElementById('btMaxDD').textContent = m.max_drawdown.toFixed(2) + '%';
+    document.getElementById('btWinRate').textContent = m.win_rate.toFixed(1) + '%';
+
+    document.getElementById('btBuyHold').textContent = (m.buy_hold_return >= 0 ? '+' : '') + m.buy_hold_return.toFixed(2) + '%';
+    document.getElementById('btExcess').textContent = (m.excess_return >= 0 ? '+' : '') + m.excess_return.toFixed(2) + '%';
+    document.getElementById('btVolatility').textContent = m.volatility.toFixed(2) + '%';
+    document.getElementById('btTradeCount').textContent = m.trade_count;
+
+    document.getElementById('btReturnSubtitle').textContent = `${data.stock_code} | ${data.strategy_desc} | ${period.start_date} ~ ${period.end_date}`;
+
+    // Charts
+    renderReturnChart(data);
+    renderDrawdownChart(data);
+    renderHeatmapChart(data);
+
+    // Trade Analysis
+    renderTradeAnalysis(data);
+
+    // LLM Explanation
+    if (data.llm_explanation) {
+        document.getElementById('btLLMExplanationCard').style.display = 'block';
+        document.getElementById('btLLMExplanationText').innerHTML = formatExplanation(data.llm_explanation);
+    } else {
+        document.getElementById('btLLMExplanationCard').style.display = 'none';
+    }
+
+    // LLM Prediction
+    if (data.llm_prediction) {
+        renderLLMPrediction(data.llm_prediction);
+    } else {
+        document.getElementById('btLLMPredictionCard').style.display = 'none';
+    }
+}
+
+function formatExplanation(text) {
+    // Convert markdown-like bold to HTML
+    return text
+        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text-primary);">$1</strong>')
+        .replace(/\n/g, '<br>')
+        .replace(/^(\d+)\.\s+(.+)$/gm, '<div style="margin-top:8px; font-weight:600; color:var(--accent-purple);">$1. $2</div>');
+}
+
+function renderReturnChart(data) {
+    const dom = document.getElementById('btReturnChart');
+    if (_btReturnChart) _btReturnChart.dispose();
+    _btReturnChart = echarts.init(dom);
+
+    const dates = data.equity_curve.dates;
+    const values = data.equity_curve.values;
+    const initial = data.capital.initial;
+
+    // Calculate cumulative return %
+    const retPct = values.map(v => ((v / initial - 1) * 100).toFixed(2));
+    // Buy & hold baseline
+    const close0 = values[0] / initial * data.capital.initial; // approx
+    const buyHold = values.map((v, i) => {
+        if (i === 0) return '0.00';
+        // Use actual close price progression if available; here approximate from equity
+        const approxBh = ((values[i] / values[0] - 1) * 100).toFixed(2);
+        return approxBh;
+    });
+
+    // Mark buy/sell points
+    const trades = data.trades || [];
+    const buyMarks = [];
+    const sellMarks = [];
+    trades.forEach(t => {
+        const idx = dates.indexOf(t.date);
+        if (idx >= 0) {
+            const mark = { coord: [idx, retPct[idx]], value: t.type === '买入' ? '▲买' : '▼卖' };
+            if (t.type === '买入') buyMarks.push(mark);
+            else sellMarks.push(mark);
+        }
+    });
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(22,31,58,0.95)',
+            borderColor: 'rgba(100,130,200,0.2)',
+            textStyle: { color: '#e8ecf4', fontSize: 11 },
+            formatter: function(params) {
+                let res = `<div style="font-weight:bold;margin-bottom:4px;">${params[0].axisValue}</div>`;
+                params.forEach(p => {
+                    const color = p.color;
+                    res += `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;background:${color};border-radius:50%;"></span><span>${p.seriesName}: <b>${p.value}%</b></span></div>`;
+                });
+                return res;
+            }
+        },
+        legend: { data: ['策略收益', '基准'], textStyle: { color: '#8b9bb4' }, top: 10 },
+        grid: { left: '8%', right: '4%', top: '15%', bottom: '10%' },
+        xAxis: {
+            type: 'category', data: dates,
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisLabel: { color: '#4a5a78', fontSize: 9 },
+            splitLine: { show: false }
+        },
+        yAxis: {
+            type: 'value', name: '%',
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisLabel: { color: '#4a5a78' },
+            splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } }
+        },
+        dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', bottom: '2%', height: 16, borderColor: 'transparent', backgroundColor: 'rgba(100,130,200,0.05)', fillerColor: 'rgba(59,130,246,0.15)', handleStyle: { color: '#3b82f6' }, textStyle: { color: '#4a5a78', fontSize: 10 } }
+        ],
+        series: [
+            {
+                name: '策略收益', type: 'line', data: retPct,
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#22c55e', width: 2 },
+                areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1, [{offset:0,color:'rgba(34,197,94,0.2)'},{offset:1,color:'rgba(34,197,94,0)'}]) },
+                markPoint: {
+                    data: [
+                        ...buyMarks.slice(0, 20),
+                        ...sellMarks.slice(0, 20),
+                    ],
+                    symbolSize: 1,
+                    label: {
+                        show: true,
+                        position: 'top',
+                        fontSize: 10,
+                        color: '#22c55e',
+                        formatter: function(p) { return p.value; }
+                    }
+                }
+            },
+            {
+                name: '基准', type: 'line', data: buyHold,
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#3b82f6', width: 1.5, type: 'dashed' }
+            }
+        ]
+    };
+    _btReturnChart.setOption(option);
+    window.addEventListener('resize', () => _btReturnChart.resize());
+}
+
+function renderDrawdownChart(data) {
+    const dom = document.getElementById('btDrawdownChart');
+    if (_btDrawdownChart) _btDrawdownChart.dispose();
+    _btDrawdownChart = echarts.init(dom);
+
+    const dates = data.drawdown_curve.dates;
+    const values = data.drawdown_curve.values;
+
+    // Find max drawdown period
+    let maxDD = 0, maxStart = 0, maxEnd = 0;
+    let peakIdx = 0;
+    for (let i = 0; i < values.length; i++) {
+        if (values[i] > maxDD) {
+            maxDD = values[i];
+            maxStart = peakIdx;
+            maxEnd = i;
+        }
+        if (values[i] === 0) peakIdx = i;
+    }
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(22,31,58,0.95)',
+            borderColor: 'rgba(100,130,200,0.2)',
+            textStyle: { color: '#e8ecf4' },
+            formatter: function(p) {
+                return `<div style="font-weight:bold;margin-bottom:4px;">${p[0].axisValue}</div>回撤: <b style="color:#ef4444">${p[0].value}%</b>`;
+            }
+        },
+        grid: { left: '8%', right: '4%', top: '10%', bottom: '10%' },
+        xAxis: {
+            type: 'category', data: dates,
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisLabel: { color: '#4a5a78', fontSize: 9 },
+            splitLine: { show: false }
+        },
+        yAxis: {
+            type: 'value', name: '%',
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisLabel: { color: '#4a5a78' },
+            splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } }
+        },
+        dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', bottom: '2%', height: 16, borderColor: 'transparent', backgroundColor: 'rgba(100,130,200,0.05)', fillerColor: 'rgba(59,130,246,0.15)', handleStyle: { color: '#3b82f6' }, textStyle: { color: '#4a5a78', fontSize: 10 } }
+        ],
+        series: [{
+            type: 'line', data: values,
+            smooth: true, showSymbol: false,
+            lineStyle: { color: '#ef4444', width: 1.5 },
+            areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1, [{offset:0,color:'rgba(239,68,68,0.3)'},{offset:1,color:'rgba(239,68,68,0)'}]) },
+            markLine: {
+                silent: true,
+                data: [{ yAxis: -data.metrics.max_drawdown, lineStyle: { color: 'rgba(239,68,68,0.5)', type: 'dashed' }, label: { formatter: '最大回撤 {c}%', color: '#ef4444', fontSize: 10 } }]
+            }
+        }]
+    };
+    _btDrawdownChart.setOption(option);
+    window.addEventListener('resize', () => _btDrawdownChart.resize());
+}
+
+function renderHeatmapChart(data) {
+    const dom = document.getElementById('btHeatmapChart');
+    if (_btHeatmapChart) _btHeatmapChart.dispose();
+    _btHeatmapChart = echarts.init(dom);
+
+    const monthly = data.monthly_returns || [];
+    if (monthly.length === 0) {
+        dom.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:13px;">数据不足，无法生成月度热力图</div>';
+        return;
+    }
+
+    // Group by year
+    const years = [...new Set(monthly.map(m => m.year))].sort();
+    const months = [1,2,3,4,5,6,7,8,9,10,11,12];
+    const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+    const hmData = [];
+    monthly.forEach(m => {
+        const yi = years.indexOf(m.year);
+        const mi = m.month - 1;
+        hmData.push([mi, yi, m.return_pct]);
+    });
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            position: 'top',
+            backgroundColor: 'rgba(22,31,58,0.95)',
+            borderColor: 'rgba(100,130,200,0.2)',
+            textStyle: { color: '#e8ecf4' },
+            formatter: function(p) {
+                return `<div style="font-weight:bold">${years[p.value[1]]}年${monthNames[p.value[0]]}</div>收益: <b style="color:${p.value[2] >= 0 ? '#22c55e' : '#ef4444'}">${p.value[2].toFixed(2)}%</b>`;
+            }
+        },
+        grid: { top: '15%', bottom: '15%', left: '10%', right: '5%' },
+        xAxis: {
+            type: 'category', data: monthNames,
+            splitArea: { show: true, areaStyle: { color: 'rgba(100,130,200,0.03)' } },
+            axisLabel: { color: '#8b9bb4', fontSize: 10 },
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }
+        },
+        yAxis: {
+            type: 'category', data: years,
+            splitArea: { show: true, areaStyle: { color: 'rgba(100,130,200,0.03)' } },
+            axisLabel: { color: '#8b9bb4', fontSize: 11 },
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }
+        },
+        visualMap: {
+            min: -10, max: 10, calculable: true, orient: 'horizontal',
+            left: 'center', bottom: '2%',
+            inRange: { color: ['#ef4444', '#eab308', '#22c55e'] },
+            textStyle: { color: '#8b9bb4' }
+        },
+        series: [{
+            name: '月度收益%', type: 'heatmap', data: hmData,
+            label: { show: true, fontSize: 10, color: '#e8ecf4', formatter: p => p.value[2].toFixed(1) + '%' },
+            emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+        }]
+    };
+    _btHeatmapChart.setOption(option);
+    window.addEventListener('resize', () => _btHeatmapChart.resize());
+}
+
+function renderTradeAnalysis(data) {
+    const analysis = data.trade_analysis || {};
+    const trades = data.trades || [];
+
+    // Stats
+    document.getElementById('btStatTotal').textContent = analysis.total_trades || 0;
+    document.getElementById('btStatHolding').textContent = (analysis.avg_holding_days || 0) + '天';
+    document.getElementById('btStatFactor').textContent = (analysis.profit_factor || 0).toFixed(2);
+    const grossProfit = analysis.gross_profit || 0;
+    const grossLoss = analysis.gross_loss || 0;
+    document.getElementById('btStatGross').innerHTML = `<span style="color:var(--accent-green)">+${grossProfit.toFixed(0)}</span> / <span style="color:var(--accent-red)">-${grossLoss.toFixed(0)}</span>`;
+
+    document.getElementById('btTradeSummary').textContent = `${analysis.winning_trades || 0}盈 ${analysis.losing_trades || 0}亏 | 平均${analysis.avg_holding_days || 0}天`;
+
+    // Table
+    const tbody = document.getElementById('btTradeTable');
+    tbody.innerHTML = trades.map(t => {
+        const typeColor = t.type === '买入' ? 'var(--accent-green)' : 'var(--accent-red)';
+        return `<tr style="border-bottom:1px solid rgba(100,130,200,0.06);">
+            <td style="padding:6px 8px; color:var(--text-secondary); white-space:nowrap;">${t.date}</td>
+            <td style="padding:6px 8px; text-align:center; color:${typeColor}; font-weight:600;">${t.type}</td>
+            <td style="padding:6px 8px; text-align:right; color:var(--text-secondary); font-family:var(--font-mono);">¥${t.price.toFixed(2)}</td>
+            <td style="padding:6px 8px; text-align:right; color:var(--text-secondary);">${t.shares.toLocaleString()}</td>
+            <td style="padding:6px 8px; text-align:right; color:var(--text-secondary); font-family:var(--font-mono);">¥${t.value.toFixed(0)}</td>
+            <td style="padding:6px 8px; text-align:right; color:var(--text-muted); font-size:11px;">¥${t.commission.toFixed(2)}</td>
+            <td style="padding:6px 8px; color:var(--text-muted); font-size:11px; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${t.reason}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderLLMPrediction(pred) {
+    const card = document.getElementById('btLLMPredictionCard');
+    card.style.display = 'block';
+
+    const dirColor = pred.direction === '上涨' ? 'var(--accent-green)' : (pred.direction === '下跌' ? 'var(--accent-red)' : 'var(--accent-yellow)');
+    document.getElementById('btPredDirection').textContent = pred.direction;
+    document.getElementById('btPredDirection').style.color = dirColor;
+    document.getElementById('btPredConfidence').textContent = ((pred.confidence || 0) * 100).toFixed(0) + '%';
+    document.getElementById('btPredTarget').textContent = (pred.target_price_low && pred.target_price_high)
+        ? `¥${pred.target_price_low.toFixed(2)}-${pred.target_price_high.toFixed(2)}`
+        : '--';
+    document.getElementById('btPredStop').textContent = pred.stop_loss ? `¥${pred.stop_loss.toFixed(2)}` : '--';
+    document.getElementById('btPredRR').textContent = pred.risk_reward_ratio ? pred.risk_reward_ratio.toFixed(2) : '--';
+
+    const up = Math.round((pred.probability_up || 0) * 100);
+    const hold = Math.round((pred.probability_sideways || 0) * 100);
+    const down = Math.round((pred.probability_down || 0) * 100);
+    document.getElementById('btPredBarUp').style.width = up + '%';
+    document.getElementById('btPredBarHold').style.width = hold + '%';
+    document.getElementById('btPredBarDown').style.width = down + '%';
+    document.getElementById('btPredUpNum').textContent = up;
+    document.getElementById('btPredHoldNum').textContent = hold;
+    document.getElementById('btPredDownNum').textContent = down;
+
+    const drivers = pred.key_drivers || [];
+    document.getElementById('btPredDrivers').innerHTML = drivers.length
+        ? drivers.map(d => `<span class="mass-tag mass-tag-factor">${d}</span>`).join('')
+        : '<span style="color:var(--text-muted); font-size:11px;">暂无</span>';
+
+    const risks = pred.risk_factors || [];
+    document.getElementById('btPredRisks').innerHTML = risks.length
+        ? risks.map(r => `<span class="mass-tag mass-tag-risk">${r}</span>`).join('')
+        : '<span style="color:var(--text-muted); font-size:11px;">暂无</span>';
+
+    document.getElementById('btPredReasoning').textContent = pred.reasoning || '--';
+}
+
+// ========== Compare Mode ==========
+
+function runCompare() {
+    const stockCode = document.getElementById('btCode').value.trim();
+    if (!stockCode || stockCode.length !== 6) {
+        alert('请输入6位股票代码');
+        return;
+    }
+
+    const checks = document.querySelectorAll('.compare-check:checked');
+    const strategies = Array.from(checks).map(c => c.value);
+    if (strategies.length < 2) {
+        alert('请至少选择2个策略进行对比');
+        return;
+    }
+    if (strategies.length > 3) {
+        alert('最多选择3个策略');
+        return;
+    }
+
+    const startDate = document.getElementById('btStart').value;
+    const endDate = document.getElementById('btEnd').value;
+
+    document.getElementById('btLoading').style.display = 'flex';
+    document.getElementById('backtestResult').style.display = 'none';
+    document.getElementById('compareResult').style.display = 'none';
+    startBacktestLoadingStages(false);
+
+    fetch('/api/agent/backtest/compare', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stock_code: stockCode,
+            strategies: strategies,
+            start_date: startDate,
+            end_date: endDate,
+            initial_capital: parseFloat(document.getElementById('btCapital').value) || 100000,
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        stopBacktestLoadingStages();
+        document.getElementById('btLoading').style.display = 'none';
+        if (data.code !== 'OK') {
+            alert('对比失败: ' + (data.error || '未知错误'));
+            return;
+        }
+        document.getElementById('compareResult').style.display = 'block';
+        renderCompareResult(data);
+    })
+    .catch(err => {
+        stopBacktestLoadingStages();
+        document.getElementById('btLoading').style.display = 'none';
+        alert('请求失败: ' + err.message);
+    });
+}
+
+function renderCompareResult(data) {
+    const results = data.results;
+    const tbody = document.getElementById('btCompareTable');
+
+    tbody.innerHTML = results.map((r, i) => {
+        const retColor = r.total_return >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+        const rankIcon = i === 0 ? '1st' : (i === 1 ? '2nd' : '3rd');
+        return `<tr style="border-bottom:1px solid rgba(100,130,200,0.06); ${i===0?'background:rgba(34,197,94,0.05);':''}">
+            <td style="padding:10px; font-weight:600;">${rankIcon} ${r.strategy_desc}</td>
+            <td style="padding:10px; text-align:right; color:${retColor}; font-weight:700;">${r.total_return.toFixed(2)}%</td>
+            <td style="padding:10px; text-align:right;">${r.sharpe_ratio.toFixed(2)}</td>
+            <td style="padding:10px; text-align:right; color:var(--accent-red);">${r.max_drawdown.toFixed(2)}%</td>
+            <td style="padding:10px; text-align:right;">${r.win_rate.toFixed(1)}%</td>
+            <td style="padding:10px; text-align:right;">${r.trade_count}</td>
+            <td style="padding:10px; text-align:right; color:var(--accent-cyan);">${r.excess_return.toFixed(2)}%</td>
+        </tr>`;
+    }).join('');
+
+    // Compare Chart
+    const dom = document.getElementById('btCompareChart');
+    if (_btCompareChart) _btCompareChart.dispose();
+    _btCompareChart = echarts.init(dom);
+
+    const colors = ['#22c55e', '#3b82f6', '#f97316'];
+    const series = results.map((r, i) => ({
+        name: r.strategy_desc,
+        type: 'line',
+        data: r.equity_curve.map((v, idx) => {
+            const initial = r.equity_curve[0] || 100000;
+            return ((v / initial - 1) * 100).toFixed(2);
+        }),
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { color: colors[i % colors.length], width: 2 }
+    }));
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(22,31,58,0.95)',
+            borderColor: 'rgba(100,130,200,0.2)',
+            textStyle: { color: '#e8ecf4' }
+        },
+        legend: { data: results.map(r => r.strategy_desc), textStyle: { color: '#8b9bb4' }, top: 10 },
+        grid: { left: '8%', right: '4%', top: '15%', bottom: '10%' },
+        xAxis: {
+            type: 'category', data: results[0].dates,
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisLabel: { color: '#4a5a78', fontSize: 9 },
+            splitLine: { show: false }
+        },
+        yAxis: {
+            type: 'value', name: '%',
+            axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } },
+            axisLabel: { color: '#4a5a78' },
+            splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } }
+        },
+        dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', bottom: '2%', height: 16, borderColor: 'transparent', backgroundColor: 'rgba(100,130,200,0.05)', fillerColor: 'rgba(59,130,246,0.15)', handleStyle: { color: '#3b82f6' }, textStyle: { color: '#4a5a78', fontSize: 10 } }
+        ],
+        series: series
+    };
+    _btCompareChart.setOption(option);
+    window.addEventListener('resize', () => _btCompareChart.resize());
+}
+</script>
+{% endblock %}

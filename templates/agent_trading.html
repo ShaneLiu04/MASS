@@ -1,0 +1,777 @@
+{% extends "base.html" %}
+
+{% block title %}个股智能诊断{% endblock %}
+
+{% block content %}
+<!-- ========== Search Section ========== -->
+<div class="mass-section">
+    <div class="mass-card" style="padding: 20px 24px;">
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+            <div style="flex:1; min-width:200px; max-width:400px;">
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="stockInput" class="mass-input" placeholder="输入6位股票代码 (如: 000001)" maxlength="6" style="flex:1; font-family:var(--font-mono);">
+                    <button class="mass-btn mass-btn-primary" onclick="startDiagnosis()">
+                        <i class="bi bi-search" style="margin-right:4px"></i>智能诊断
+                    </button>
+                    <button class="mass-btn mass-btn-stream" onclick="startStreamDiagnosis()" title="SSE 实时流式推理 — 6个Agent并行分析全程可见">
+                        <span class="stream-pulse"></span><i class="bi bi-broadcast" style="margin-right:4px"></i>实时诊断
+                    </button>
+                </div>
+            </div>
+            <div id="quickStocks" style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="mass-btn mass-btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="quickDiagnose('000001')">000001 平安银行</button>
+                <button class="mass-btn mass-btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="quickDiagnose('000002')">000002 万科A</button>
+                <button class="mass-btn mass-btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="quickDiagnose('600000')">600000 浦发银行</button>
+                <button class="mass-btn mass-btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="quickDiagnose('600519')">600519 贵州茅台</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== Loading Area ========== -->
+<style>
+.sse-loading-container { text-align:center; padding:32px 20px; max-width:720px; margin:0 auto; }
+.sse-progress-header { margin-bottom:20px; }
+.sse-progress-bar-container { width:100%; height:8px; background:var(--bg-tertiary); border-radius:4px; overflow:hidden; margin-bottom:8px; }
+.sse-progress-bar { height:100%; width:0%; background:linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); border-radius:4px; transition:width 0.6s cubic-bezier(.4,0,.2,1); }
+.sse-progress-stats { display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); }
+.sse-agent-stage { margin:20px 0; }
+.sse-stage-text { font-size:15px; font-weight:600; color:var(--text-primary); margin-bottom:14px; min-height:22px; transition:opacity 0.3s; }
+.sse-agents-row { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; }
+.sse-agent-card { width:76px; padding:10px 6px; border-radius:10px; background:var(--bg-secondary); border:1px solid var(--border-color); text-align:center; transition:all 0.4s; position:relative; }
+.sse-agent-card.active { border-color:var(--accent-blue); box-shadow:0 0 12px rgba(59,130,246,0.25); transform:translateY(-2px); }
+.sse-agent-card.done { border-color:var(--accent-green); opacity:0.75; }
+.sse-agent-card.done .sse-agent-icon { filter:grayscale(0.3); }
+.sse-agent-icon { width:36px; height:36px; border-radius:50%; margin:0 auto 6px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; position:relative; }
+.sse-agent-icon i { line-height:1; }
+.sse-agent-icon.pulse::after { content:''; position:absolute; inset:-4px; border-radius:50%; border:2px solid currentColor; opacity:0; animation:ssePulse 1.8s infinite; }
+@keyframes ssePulse { 0% { transform:scale(1); opacity:0.6; } 100% { transform:scale(1.5); opacity:0; } }
+.sse-agent-name { font-size:10px; font-weight:600; color:var(--text-secondary); }
+.sse-agent-status { font-size:9px; color:var(--text-muted); margin-top:2px; }
+.sse-data-sources { display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin:14px 0; min-height:28px; }
+.sse-ds-tag { font-size:10px; padding:3px 8px; border-radius:12px; background:var(--bg-tertiary); color:var(--text-muted); border:1px solid var(--border-color); transition:all 0.4s; }
+.sse-ds-tag.connected { background:rgba(34,197,94,0.12); color:var(--accent-green); border-color:var(--accent-green); }
+.sse-ds-tag.failed { background:rgba(239,68,68,0.12); color:var(--accent-red); border-color:var(--accent-red); }
+.sse-cancel-btn { margin-top:16px; font-size:12px; color:var(--text-muted); background:none; border:1px solid var(--border-color); padding:6px 16px; border-radius:6px; cursor:pointer; transition:all 0.2s; }
+.sse-cancel-btn:hover { color:var(--accent-red); border-color:var(--accent-red); }
+.sse-spinner-ring { width:48px; height:48px; margin:0 auto 14px; position:relative; }
+.sse-spinner-ring svg { width:100%; height:100%; animation:sseSpin 1.2s linear infinite; }
+@keyframes sseSpin { 100% { transform:rotate(360deg); } }
+</style>
+
+<div id="loadingArea" class="mass-loading" style="display:none;">
+    <div class="sse-loading-container">
+        <div class="sse-spinner-ring">
+            <svg viewBox="0 0 48 48">
+                <circle cx="24" cy="24" r="20" fill="none" stroke="var(--border-color)" stroke-width="3"/>
+                <circle cx="24" cy="24" r="20" fill="none" stroke="var(--accent-purple)" stroke-width="3" stroke-linecap="round" stroke-dasharray="80 125" stroke-dashoffset="0"/>
+            </svg>
+        </div>
+        <div class="sse-progress-header">
+            <div class="sse-progress-bar-container">
+                <div class="sse-progress-bar" id="sseProgressBar"></div>
+            </div>
+            <div class="sse-progress-stats">
+                <span id="sseProgressText">准备中...</span>
+                <span id="sseEtaText">预计耗时 2-5 分钟</span>
+            </div>
+        </div>
+        <div class="sse-agent-stage">
+            <div class="sse-stage-text" id="sseStageText">正在初始化多智能体分析引擎...</div>
+            <div class="sse-agents-row" id="sseAgentsRow"></div>
+        </div>
+        <div class="sse-data-sources" id="sseDataSources"></div>
+        <button class="sse-cancel-btn" id="sseCancelBtn" onclick="cancelDiagnosis()">取消诊断</button>
+    </div>
+</div>
+
+<!-- ========== Stream Output Area — 全屏 2×3 布局 ========== -->
+<div id="streamArea" style="display:none; position:relative; margin-bottom:24px;">
+    <!-- 断线重连遮罩层 -->
+    <div id="streamReconnectOverlay" style="display:none; position:absolute; inset:0; z-index:10; background:rgba(15,23,42,0.85); backdrop-filter:blur(4px); border-radius:var(--radius-md); align-items:center; justify-content:center; flex-direction:column; gap:16px;">
+        <div style="width:40px; height:40px; border:3px solid rgba(100,130,200,0.2); border-top-color:var(--accent-cyan); border-radius:50%; animation:spin 1s linear infinite;"></div>
+        <div id="streamReconnectText" style="font-size:14px; color:var(--text-secondary);">连接已断开，正在重连...</div>
+    </div>
+    <!-- Progress Timeline Bar -->
+    <div id="streamProgressBar" style="display:flex; align-items:center; gap:0; margin-bottom:16px; padding:10px 16px; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-md); overflow:hidden;">
+        <div class="stream-stage" data-stage="init" id="stage-init">
+            <span class="stage-dot"></span><span class="stage-label">连接</span>
+        </div>
+        <div class="stage-connector" id="conn-0"></div>
+        <div class="stream-stage" data-stage="data" id="stage-data">
+            <span class="stage-dot"></span><span class="stage-label">数据</span>
+        </div>
+        <div class="stage-connector" id="conn-1"></div>
+        <div class="stream-stage" data-stage="agents" id="stage-agents">
+            <span class="stage-dot"></span><span class="stage-label">分析</span>
+        </div>
+        <div class="stage-connector" id="conn-2"></div>
+        <div class="stream-stage" data-stage="engine" id="stage-engine">
+            <span class="stage-dot"></span><span class="stage-label">决策</span>
+        </div>
+        <div class="stage-connector" id="conn-3"></div>
+        <div class="stream-stage" data-stage="chairman" id="stage-chairman">
+            <span class="stage-dot"></span><span class="stage-label">主席</span>
+        </div>
+        <div class="stage-connector" id="conn-4"></div>
+        <div class="stream-stage" data-stage="result" id="stage-result">
+            <span class="stage-dot"></span><span class="stage-label">完成</span>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <div id="streamConsensusMini" style="display:none; align-items:center; gap:6px;">
+                <span style="font-size:10px; color:var(--text-muted);">共识</span>
+                <div style="display:flex; height:4px; width:80px; border-radius:2px; overflow:hidden; background:rgba(100,130,200,0.08);">
+                    <div id="cMiniBuy" style="height:100%; background:var(--accent-green); transition:width 0.5s;"></div>
+                    <div id="cMiniHold" style="height:100%; background:var(--accent-yellow); transition:width 0.5s;"></div>
+                    <div id="cMiniSell" style="height:100%; background:var(--accent-red); transition:width 0.5s;"></div>
+                </div>
+            </div>
+            <span id="streamAgentCount" style="font-size:12px; color:var(--accent-cyan); font-family:var(--font-mono);">0/6</span>
+            <span id="streamStatus" style="font-size:11px; color:var(--text-muted);">连接中...</span>
+        </div>
+    </div>
+
+    <!-- 6 Agent Cards: 2×3 Unified Grid -->
+    <div id="streamAgentGrid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px;">
+        <!-- TA-Agent -->
+        <div class="agent-card" id="stream-agent-TA-Agent" style="opacity:0.4; border-top:3px solid #06b6d4;" data-color="#06b6d4" data-icon="graph-up-arrow" data-name="技术面" data-role="K线形态 · 均线系统 · MACD/RSI/KDJ">
+            <div class="ach-header">
+                <span class="ach-icon" style="background:#06b6d415;color:#06b6d4;"><i class="bi bi-graph-up-arrow"></i></span>
+                <span class="ach-name" style="color:#06b6d4;">技术面</span>
+                <span class="ach-role">K线形态 · 均线系统 · MACD/RSI/KDJ</span>
+                <span class="ach-signal" style="color:var(--text-muted);">--</span>
+                <span class="ach-conf">--%</span>
+            </div>
+            <div class="ach-progress"><div class="ach-progress-fill" style="width:0%;background:#06b6d4;"></div></div>
+            <div class="ach-kv" id="sfc-taI"></div>
+            <div class="ach-reasoning" style="color:var(--text-muted);">等待技术面分析师完成K线形态与指标研判...</div>
+            <div class="ach-tags" id="sfc-taT"></div>
+        </div>
+
+        <!-- FA-Agent -->
+        <div class="agent-card" id="stream-agent-FA-Agent" style="opacity:0.4; border-top:3px solid #3b82f6;" data-color="#3b82f6" data-icon="bar-chart-line" data-name="基本面" data-role="财务健康度 · 估值水平 · 盈利能力">
+            <div class="ach-header">
+                <span class="ach-icon" style="background:#3b82f615;color:#3b82f6;"><i class="bi bi-bar-chart-line"></i></span>
+                <span class="ach-name" style="color:#3b82f6;">基本面</span>
+                <span class="ach-role">财务健康度 · 估值水平 · 盈利能力</span>
+                <span class="ach-signal" style="color:var(--text-muted);">--</span>
+                <span class="ach-conf">--%</span>
+            </div>
+            <div class="ach-progress"><div class="ach-progress-fill" style="width:0%;background:#3b82f6;"></div></div>
+            <div class="ach-kv" id="sfc-faI"></div>
+            <div class="ach-reasoning" style="color:var(--text-muted);">等待基本面分析师完成财务数据评估...</div>
+            <div class="ach-tags" id="sfc-faT"></div>
+        </div>
+
+        <!-- CA-Agent -->
+        <div class="agent-card" id="stream-agent-CA-Agent" style="opacity:0.4; border-top:3px solid #a855f7;" data-color="#a855f7" data-icon="cash-stack" data-name="资金面" data-role="主力资金 · 北向资金 · 筹码分布">
+            <div class="ach-header">
+                <span class="ach-icon" style="background:#a855f715;color:#a855f7;"><i class="bi bi-cash-stack"></i></span>
+                <span class="ach-name" style="color:#a855f7;">资金面</span>
+                <span class="ach-role">主力资金 · 北向资金 · 筹码分布</span>
+                <span class="ach-signal" style="color:var(--text-muted);">--</span>
+                <span class="ach-conf">--%</span>
+            </div>
+            <div class="ach-progress"><div class="ach-progress-fill" style="width:0%;background:#a855f7;"></div></div>
+            <div class="ach-kv" id="sfc-caI"></div>
+            <div class="ach-reasoning" style="color:var(--text-muted);">等待资金面分析师完成资金流向追踪...</div>
+            <div class="ach-tags" id="sfc-caT"></div>
+        </div>
+
+        <!-- SA-Agent -->
+        <div class="agent-card" id="stream-agent-SA-Agent" style="opacity:0.4; border-top:3px solid #f97316;" data-color="#f97316" data-icon="chat-square-text" data-name="情绪面" data-role="市场情绪 · 舆情热度 · crowd行为">
+            <div class="ach-header">
+                <span class="ach-icon" style="background:#f9731615;color:#f97316;"><i class="bi bi-chat-square-text"></i></span>
+                <span class="ach-name" style="color:#f97316;">情绪面</span>
+                <span class="ach-role">市场情绪 · 舆情热度 · crowd行为</span>
+                <span class="ach-signal" style="color:var(--text-muted);">--</span>
+                <span class="ach-conf">--%</span>
+            </div>
+            <div class="ach-progress"><div class="ach-progress-fill" style="width:0%;background:#f97316;"></div></div>
+            <div class="ach-kv" id="sfc-saI"></div>
+            <div class="ach-reasoning" style="color:var(--text-muted);">等待情绪面分析师完成舆情与情绪评估...</div>
+            <div class="ach-tags" id="sfc-saT"></div>
+        </div>
+
+        <!-- MA-Agent -->
+        <div class="agent-card" id="stream-agent-MA-Agent" style="opacity:0.4; border-top:3px solid #eab308;" data-color="#eab308" data-icon="bank" data-name="宏观" data-role="经济周期 · 行业景气 · 政策环境">
+            <div class="ach-header">
+                <span class="ach-icon" style="background:#eab30815;color:#eab308;"><i class="bi bi-bank"></i></span>
+                <span class="ach-name" style="color:#eab308;">宏观</span>
+                <span class="ach-role">经济周期 · 行业景气 · 政策环境</span>
+                <span class="ach-signal" style="color:var(--text-muted);">--</span>
+                <span class="ach-conf">--%</span>
+            </div>
+            <div class="ach-progress"><div class="ach-progress-fill" style="width:0%;background:#eab308;"></div></div>
+            <div class="ach-kv" id="sfc-maI"></div>
+            <div class="ach-reasoning" style="color:var(--text-muted);">等待宏观策略师完成经济周期研判...</div>
+            <div class="ach-tags" id="sfc-maT"></div>
+        </div>
+
+        <!-- RA-Agent -->
+        <div class="agent-card" id="stream-agent-RA-Agent" style="opacity:0.4; border-top:3px solid #ef4444;" data-color="#ef4444" data-icon="shield-exclamation" data-name="风险" data-role="波动率 · 最大回撤 · 仓位管理">
+            <div class="ach-header">
+                <span class="ach-icon" style="background:#ef444415;color:#ef4444;"><i class="bi bi-shield-exclamation"></i></span>
+                <span class="ach-name" style="color:#ef4444;">风险</span>
+                <span class="ach-role">波动率 · 最大回撤 · 仓位管理</span>
+                <span class="ach-signal" style="color:var(--text-muted);">--</span>
+                <span class="ach-conf">--%</span>
+            </div>
+            <div class="ach-progress"><div class="ach-progress-fill" style="width:0%;background:#ef4444;"></div></div>
+            <div class="ach-kv" id="sfc-raI"></div>
+            <div class="ach-reasoning" style="color:var(--text-muted);">等待风险控制官完成风险等级评估...</div>
+            <div class="ach-tags" id="sfc-raT"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== Result Area — v2.3 全宽紧凑布局 ========== -->
+<div id="resultArea" style="display:none;">
+
+    <!-- Header Decision Banner -->
+    <div class="mass-section">
+        <div class="mass-card" id="decisionBanner" style="border-left:4px solid var(--accent-blue);">
+            <div style="padding:18px 24px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;">
+                <div style="display:flex; align-items:center; gap:16px;">
+                    <div>
+                        <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px;">诊断标的</div>
+                        <div style="font-size:26px; font-weight:700;" id="bannerStock">--</div>
+                        <div style="font-size:13px; color:var(--text-secondary);" id="bannerPrice">--</div>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">Chairman决策</div><div style="margin-top:6px;" id="bannerSignal">--</div></div>
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">置信度</div><div class="mass-metric-value" style="font-size:22px;" id="bannerConfidence">--</div></div>
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">建议仓位</div><div class="mass-metric-value" style="font-size:22px; color:var(--accent-cyan);" id="bannerPosition">--</div></div>
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">目标价</div><div class="mass-metric-value up" style="font-size:20px;" id="planTarget">--</div></div>
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">止损价</div><div class="mass-metric-value down" style="font-size:20px;" id="planStop">--</div></div>
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">预期收益</div><div class="mass-metric-value" style="font-size:22px; color:var(--accent-green);" id="bannerReturn">--</div></div>
+                    <div style="text-align:center;"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">耗时</div><div style="font-size:13px; color:var(--text-secondary); font-family:var(--font-mono); margin-top:4px;" id="bannerTime">--</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 1: K-line Full Width (taller) -->
+    <div class="mass-card" style="margin-bottom:16px;">
+        <div class="mass-card-header">
+            <div class="mass-card-title"><i class="bi bi-graph-up-arrow" style="color:var(--agent-ta);margin-right:6px"></i>K线技术分析</div>
+            <div style="display:flex; gap:8px;">
+                <span class="mass-tag mass-tag-factor" id="klineMaStatus">MA排列: --</span>
+                <span class="mass-tag mass-tag-factor" id="klineMacdStatus">MACD: --</span>
+            </div>
+        </div>
+        <div class="mass-card-body" style="padding:0;"><div id="klineChart" style="width:100%; height:380px;"></div></div>
+    </div>
+
+    <!-- Row 2: 6 Agent Analysis Cards 2×3 Grid + Consensus Sidebar -->
+    <div style="display:grid; grid-template-columns:1fr 280px; gap:16px; margin-bottom:16px;">
+        <!-- 6 Agent Cards in 2×3 Grid -->
+        <div id="agentResultGrid" style="display:grid; grid-template-columns:repeat(3, 1fr); grid-template-rows:auto auto; gap:10px;">
+            <!-- Dynamic: 6 rich agent cards rendered by JS -->
+        </div>
+        <!-- Sidebar: Radar + Consensus + Trade Plan -->
+        <div style="display:flex; flex-direction:column; gap:12px;">
+            <div class="mass-card">
+                <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-bullseye" style="color:var(--accent-purple);margin-right:4px"></i>六维评估</div></div>
+                <div class="mass-card-body" style="padding:0;"><div id="radar3DChart" style="height:200px;"></div></div>
+            </div>
+            <div class="mass-card">
+                <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-check2-all" style="color:var(--accent-green);margin-right:4px"></i>信号共识</div></div>
+                <div class="mass-card-body" style="padding:10px 14px;">
+                    <div id="resultConsensusBar" style="margin-bottom:8px;">
+                        <div style="display:flex; height:8px; border-radius:4px; overflow:hidden; background:rgba(100,130,200,0.08);">
+                            <div id="rConsensusBuy" style="height:100%; background:var(--accent-green); transition:width 0.5s;"></div>
+                            <div id="rConsensusHold" style="height:100%; background:var(--accent-yellow); transition:width 0.5s;"></div>
+                            <div id="rConsensusSell" style="height:100%; background:var(--accent-red); transition:width 0.5s;"></div>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:12px; font-size:11px;">
+                        <span style="color:var(--accent-green);">▲ 买入 <b id="rConsensusBuyNum">0</b></span>
+                        <span style="color:var(--accent-yellow);">— 观望 <b id="rConsensusHoldNum">0</b></span>
+                        <span style="color:var(--accent-red);">▼ 卖出 <b id="rConsensusSellNum">0</b></span>
+                    </div>
+                </div>
+            </div>
+            <div class="mass-card">
+                <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-clipboard-check" style="color:var(--accent-green);margin-right:4px"></i>交易计划</div></div>
+                <div class="mass-card-body" style="padding:10px 14px; font-size:12px; line-height:1.7;">
+                    <div id="tradePlanContent"></div>
+                    <div style="font-size:10px; color:var(--text-muted); margin-top:6px;">周期: <span id="planHorizon">--</span></div>
+                </div>
+            </div>
+            <div class="mass-card">
+                <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-sliders" style="color:var(--accent-yellow);margin-right:4px"></i>情景分析</div></div>
+                <div class="mass-card-body" style="padding:0;"><div id="scenarioGaugeChart" style="height:180px;"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3: Chairman + Risk Flags -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-award" style="color:var(--agent-chairman);margin-right:4px"></i>Chairman 推理</div></div>
+            <div class="mass-card-body" style="padding:14px 18px; max-height:200px; overflow-y:auto;">
+                <div id="chairmanReasoning" style="font-size:13px; line-height:1.7; color:var(--text-secondary);"></div>
+                <div style="margin-top:12px;" id="dissentingViews"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title">共识因子 & 风险警示</div></div>
+            <div class="mass-card-body" style="padding:12px 16px;">
+                <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">多Agent交叉验证</div>
+                <div id="consensusFactors" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px;"></div>
+                <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">风险警示</div>
+                <div id="riskFlagsAll" style="display:flex; flex-wrap:wrap; gap:6px; max-height:120px; overflow-y:auto;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 4: Charts — Capital Flow + Sentiment + Risk Matrix -->
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; margin-bottom:16px;">
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-cash-stack" style="color:var(--agent-ca);margin-right:4px"></i>资金流向</div></div>
+            <div class="mass-card-body" style="padding:0;"><div id="capitalFlowChart" style="height:240px;"></div></div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-chat-square-text" style="color:var(--agent-sa);margin-right:4px"></i>舆情词云</div></div>
+            <div class="mass-card-body" style="padding:0;"><div id="sentimentCloudChart" style="height:240px;"></div></div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header"><div class="mass-card-title"><i class="bi bi-exclamation-triangle" style="color:var(--agent-ra);margin-right:4px"></i>风险矩阵</div></div>
+            <div class="mass-card-body" style="padding:0;"><div id="riskMatrixChart" style="height:240px;"></div></div>
+        </div>
+    </div>
+
+    <!-- Export Actions -->
+    <div style="display:flex; gap:12px; justify-content:center; margin-bottom:24px;">
+        <button class="mass-btn mass-btn-ghost" onclick="exportReport('markdown')">
+            <i class="bi bi-file-earmark-text" style="margin-right:4px"></i>导出Markdown研报
+        </button>
+        <button class="mass-btn mass-btn-ghost" onclick="exportReport('pdf')">
+            <i class="bi bi-file-earmark-pdf" style="margin-right:4px"></i>导出PDF研报
+        </button>
+        <button class="mass-btn mass-btn-ghost" onclick="saveToPortfolio()">
+            <i class="bi bi-plus-circle" style="margin-right:4px"></i>加入模拟持仓
+        </button>
+    </div>
+
+</div>
+
+<!-- Report Modal -->
+<div id="reportModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:2000; align-items:center; justify-content:center;">
+    <div style="background:var(--bg-card); border:1px solid var(--border-medium); border-radius:var(--radius-lg); width:90%; max-width:800px; max-height:80vh; overflow:auto; padding:24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h3 style="margin:0;">投研报告</h3>
+            <button onclick="closeReport()" style="background:none; border:none; color:var(--text-secondary); font-size:20px; cursor:pointer;">&times;</button>
+        </div>
+        <pre id="reportContent" style="background:var(--bg-surface); padding:16px; border-radius:var(--radius-md); font-size:12px; line-height:1.6; overflow:auto; max-height:60vh; white-space:pre-wrap; word-wrap:break-word;"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/charts/trading-charts.js') }}"></script>
+<script>
+let currentResult = null;
+
+function quickDiagnose(code) {
+    document.getElementById('stockInput').value = code;
+    startDiagnosis();
+}
+
+function startDiagnosis() {
+    const stockCode = document.getElementById('stockInput').value.trim();
+    if (!stockCode || stockCode.length !== 6) {
+        alert('请输入6位股票代码');
+        return;
+    }
+
+    document.getElementById('loadingArea').style.display = 'flex';
+    document.getElementById('resultArea').style.display = 'none';
+    document.getElementById('streamArea').style.display = 'none';
+
+    // 使用 SSE 流式接口获取真实进度，但只显示 loading 区域
+    initSseLoading();
+    _sseStartTime = Date.now();
+    _sseAbortCtrl = new AbortController();
+    let resultData = null;
+
+    fetch('/api/agent/diagnose/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify({ stock_code: stockCode }),
+        signal: _sseAbortCtrl.signal
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function readChunk() {
+            return reader.read().then(({ done, value }) => {
+                if (done) {
+                    if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+                    markAgentsDone();
+                    document.getElementById('sseStageText').textContent = '分析完成，正在渲染结果...';
+                    document.getElementById('sseCancelBtn').style.display = 'none';
+                    document.getElementById('loadingArea').style.display = 'none';
+                    if (resultData) {
+                        currentResult = resultData;
+                        renderFullResult(resultData);
+                    }
+                    return;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const evt = JSON.parse(line.slice(6));
+                            if (evt.stage === 'result') {
+                                resultData = evt.data;
+                            } else if (evt.stage === 'error') {
+                                if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+                                document.getElementById('loadingArea').style.display = 'none';
+                                alert('诊断失败: ' + (evt.message || '未知错误'));
+                                return;
+                            }
+                        } catch (e) {}
+                    }
+                }
+                return readChunk();
+            });
+        }
+        return readChunk();
+    })
+    .catch(err => {
+        if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+        document.getElementById('loadingArea').style.display = 'none';
+        if (err.name !== 'AbortError') {
+            alert('请求失败: ' + err.message);
+        }
+    });
+}
+
+let _sseAbortCtrl = null;
+let _sseStageInterval = null;
+let _sseStartTime = 0;
+let _sseAgentOrder = ['TA-Agent','FA-Agent','CA-Agent','SA-Agent','MA-Agent','RA-Agent'];
+let _sseAgentColors = ['#3b82f6','#8b5cf6','#f59e0b','#ec4899','#10b981','#6366f1'];
+let _sseAgentIcons = ['graph-up-arrow','file-earmark-bar-graph','cash-coin','megaphone','globe','shield-exclamation'];
+let _sseStageTexts = [
+    '正在连接数据源（东方财富、新浪财经、Akshare）...',
+    'TA-Agent 正在分析120日K线形态与技术指标...',
+    'FA-Agent 正在评估财务报表（PE/PB/ROE/现金流）...',
+    'CA-Agent 正在追踪主力资金流向与筹码分布...',
+    'SA-Agent 正在分析市场情绪与舆情热度...',
+    'MA-Agent 正在研判宏观经济周期与行业趋势...',
+    'RA-Agent 正在计算波动率、VaR与回撤风险...',
+    'Chairman 正在综合6个Agent的观点生成决策...',
+    '正在构建共识矩阵与冲突检测模型...',
+    '正在生成交易计划与情景分析...'
+];
+let _sseDataSourceNames = ['东方财富','新浪财经','Akshare','同花顺','雪球'];
+
+function initSseLoading() {
+    document.getElementById('sseProgressBar').style.width = '0%';
+    document.getElementById('sseProgressText').textContent = '准备中...';
+    document.getElementById('sseEtaText').textContent = '预计耗时 2-5 分钟';
+    document.getElementById('sseStageText').textContent = _sseStageTexts[0];
+    document.getElementById('sseDataSources').innerHTML = '';
+    document.getElementById('sseCancelBtn').style.display = 'inline-block';
+
+    // Agent cards
+    const row = document.getElementById('sseAgentsRow');
+    row.innerHTML = '';
+    _sseAgentOrder.forEach((name, i) => {
+        const card = document.createElement('div');
+        card.className = 'sse-agent-card';
+        card.id = 'sseAgent' + i;
+        card.innerHTML = `<div class="sse-agent-icon" style="background:${_sseAgentColors[i]}"><i class="bi bi-${_sseAgentIcons[i]}"></i></div><div class="sse-agent-name">${name}</div><div class="sse-agent-status" id="sseAgentStatus${i}">等待中</div>`;
+        row.appendChild(card);
+    });
+
+    // Data source tags (random connection animation)
+    const dsRow = document.getElementById('sseDataSources');
+    _sseDataSourceNames.forEach((name, i) => {
+        const tag = document.createElement('span');
+        tag.className = 'sse-ds-tag';
+        tag.id = 'sseDs' + i;
+        tag.textContent = name;
+        dsRow.appendChild(tag);
+        setTimeout(() => {
+            const el = document.getElementById('sseDs' + i);
+            if (el) {
+                const isConnected = Math.random() > 0.15;
+                el.classList.add(isConnected ? 'connected' : 'failed');
+                el.innerHTML = name + (isConnected ? ' <i class="bi bi-check-lg"></i>' : ' <i class="bi bi-x-lg"></i>');
+            }
+        }, 800 + i * 400 + Math.random() * 600);
+    });
+
+    // Stage text rotation
+    if (_sseStageInterval) clearInterval(_sseStageInterval);
+    let stageIdx = 0;
+    _sseStageInterval = setInterval(() => {
+        stageIdx = (stageIdx + 1) % _sseStageTexts.length;
+        const el = document.getElementById('sseStageText');
+        if (el) {
+            el.style.opacity = '0';
+            setTimeout(() => {
+                if (el) { el.textContent = _sseStageTexts[stageIdx]; el.style.opacity = '1'; }
+            }, 300);
+        }
+        // Activate a random agent
+        const activeIdx = stageIdx % _sseAgentOrder.length;
+        _sseAgentOrder.forEach((_, i) => {
+            const c = document.getElementById('sseAgent' + i);
+            const s = document.getElementById('sseAgentStatus' + i);
+            if (!c || !s) return;
+            if (i === activeIdx) {
+                c.classList.add('active');
+                c.querySelector('.sse-agent-icon').classList.add('pulse');
+                s.textContent = '分析中...';
+            } else if (!c.classList.contains('done')) {
+                c.classList.remove('active');
+                c.querySelector('.sse-agent-icon').classList.remove('pulse');
+                s.textContent = '等待中';
+            }
+        });
+    }, 4500);
+}
+
+function markAgentsDone() {
+    _sseAgentOrder.forEach((_, i) => {
+        const c = document.getElementById('sseAgent' + i);
+        const s = document.getElementById('sseAgentStatus' + i);
+        if (c) { c.classList.remove('active'); c.classList.add('done'); c.querySelector('.sse-agent-icon').classList.remove('pulse'); }
+        if (s) s.textContent = '已完成';
+    });
+}
+
+function cancelDiagnosis() {
+    if (_sseAbortCtrl) { _sseAbortCtrl.abort(); }
+    if (_sseStageInterval) { clearInterval(_sseStageInterval); _sseStageInterval = null; }
+    document.getElementById('loadingArea').style.display = 'none';
+}
+
+function renderFullResult(data) {
+    document.getElementById('resultArea').style.display = 'block';
+
+    const fd = data.final_decision || {};
+    const sigMap = {
+        '-1': { text: '卖出', class: 'mass-signal-sell', color: '#ef4444' },
+        '0': { text: '观望', class: 'mass-signal-hold', color: '#eab308' },
+        '1': { text: '买入', class: 'mass-signal-buy', color: '#22c55e' }
+    };
+    const sig = sigMap[String(fd.decision)] || sigMap['0'];
+
+    // Banner
+    document.getElementById('bannerStock').textContent = `${data.stock_name || data.stock_code} (${data.stock_code})`;
+    document.getElementById('bannerPrice').textContent = `当前价: ¥${(data.current_price || 0).toFixed(2)} | 市场周期: ${data.market_cycle || '--'}`;
+    document.getElementById('bannerSignal').innerHTML = `<span class="mass-signal ${sig.class}">${sig.text}</span>`;
+    document.getElementById('bannerConfidence').textContent = `${((fd.confidence || 0) * 100).toFixed(0)}%`;
+    document.getElementById('bannerPosition').textContent = `${((fd.position_pct || 0) * 100).toFixed(1)}%`;
+    document.getElementById('bannerReturn').textContent = `${(fd.expected_return_pct || 0).toFixed(1)}%`;
+    document.getElementById('bannerTime').textContent = `${data.processing_time_seconds || '--'}s`;
+    document.getElementById('decisionBanner').style.borderLeftColor = sig.color;
+
+    // K-line
+    renderKlineChart('klineChart', data);
+
+    // 3D Radar
+    renderRadar3D('radar3DChart', data);
+
+    // Agent Result Grid (2×3, merged view)
+    renderAgentResultGrid(data);
+
+    // Scenario Gauges
+    renderScenarioGauges('scenarioGaugeChart', data);
+
+    // Trade Plan + prices in banner already
+    renderTradePlan('tradePlanContent', data);
+    document.getElementById('planTarget').textContent = fd.target_price ? `¥${fd.target_price.toFixed(2)}` : '--';
+    document.getElementById('planStop').textContent = fd.stop_loss ? `¥${fd.stop_loss.toFixed(2)}` : '--';
+    document.getElementById('planHorizon').textContent = fd.time_horizon || '--';
+
+    // Capital Flow
+    renderCapitalFlow('capitalFlowChart', data);
+
+    // Sentiment Cloud
+    renderSentimentCloud('sentimentCloudChart', data);
+
+    // Risk Matrix
+    renderRiskMatrix('riskMatrixChart', data);
+
+    // Chairman Reasoning
+    document.getElementById('chairmanReasoning').innerHTML = formatReasoning(fd.reasoning || '');
+    renderDissentingViews('dissentingViews', fd.dissenting_views || []);
+
+    // Consensus & Risk
+    renderTags('consensusFactors', fd.consensus_factors || [], 'mass-tag-success');
+    const allRisks = [];
+    Object.values(data.opinions || {}).forEach(op => {
+        (op.risk_flags || []).forEach(f => { if (!allRisks.includes(f)) allRisks.push(f); });
+    });
+    renderTags('riskFlagsAll', allRisks, 'mass-tag-risk');
+
+    // K-line status badges
+    const ind = data.data_summary?.indicator_names || [];
+    document.getElementById('klineMaStatus').textContent = ind.includes('ma_alignment') ? 'MA排列已计算' : 'MA: --';
+    document.getElementById('klineMacdStatus').textContent = ind.includes('macd_golden_cross') ? 'MACD已计算' : 'MACD: --';
+}
+
+function formatReasoning(text) {
+    return text.replace(/\n/g, '<br>').replace(/([0-9]+\.[0-9]+)/g, '<span style="color:var(--accent-cyan); font-family:var(--font-mono);">$1</span>');
+}
+
+function renderTags(containerId, items, className) {
+    const el = document.getElementById(containerId);
+    if (!items.length) {
+        el.innerHTML = '<span style="color:var(--text-muted); font-size:12px;">无</span>';
+        return;
+    }
+    el.innerHTML = items.map(f => `<span class="mass-tag ${className}">${f}</span>`).join('');
+}
+
+function renderDissentingViews(containerId, views) {
+    const el = document.getElementById(containerId);
+    if (!views || !views.length) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'block';
+    el.innerHTML = '<div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">异议记录</div>' +
+        views.map(v => `
+            <div style="padding:10px; background:var(--bg-surface); border-radius:var(--radius-sm); margin-bottom:8px; border-left:3px solid var(--accent-orange);">
+                <div style="font-size:12px; color:var(--agent-sa); font-weight:600;">${v.agent}: ${v.view}</div>
+                <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">→ ${v.chairman_response}</div>
+            </div>
+        `).join('');
+}
+
+function exportReport(format) {
+    if (!currentResult) { alert('请先进行诊断'); return; }
+    const fd = currentResult.final_decision || {};
+    const ops = currentResult.opinions || {};
+    const sigText = fd.decision === 1 ? '买入' : (fd.decision === -1 ? '卖出' : '观望');
+
+    let md = `# MASS投研报告: ${currentResult.stock_name || currentResult.stock_code}\n\n`;
+    md += `**生成时间**: ${currentResult.decision_date} ${currentResult.decision_time}\n\n`;
+    md += `## 一、综合决策\n\n`;
+    md += `- **决策**: ${sigText} (置信度: ${(fd.confidence*100).toFixed(1)}%)\n`;
+    md += `- **建议仓位**: ${(fd.position_pct*100).toFixed(1)}%\n`;
+    md += `- **目标价**: ${fd.target_price || '--'}\n`;
+    md += `- **止损价**: ${fd.stop_loss || '--'}\n`;
+    md += `- **预期收益**: ${fd.expected_return_pct || 0}%\n\n`;
+    md += `## 二、各Agent观点\n\n`;
+    Object.entries(ops).forEach(([id, op]) => {
+        const s = op.signal === 1 ? '买入' : (op.signal === -1 ? '卖出' : '观望');
+        md += `### ${id}\n- 信号: ${s} (置信度: ${(op.confidence*100).toFixed(0)}%)\n`;
+        md += `- 理由: ${op.reasoning}\n- 关键因子: ${(op.key_factors || []).join(', ')}\n\n`;
+    });
+    md += `## 三、Chairman推理\n\n${fd.reasoning || ''}\n\n`;
+    md += `---\n*免责声明: 本报告仅供参考，不构成投资建议。*`;
+
+    if (format === 'markdown') {
+        document.getElementById('reportContent').textContent = md;
+        document.getElementById('reportModal').style.display = 'flex';
+    } else {
+        const element = document.createElement('div');
+        element.innerHTML = `<pre style="background:#0a0e1a;color:#e8ecf4;padding:40px;font-family:sans-serif;line-height:1.8;white-space:pre-wrap;">${md.replace(/\n/g, '<br>')}</pre>`;
+        html2pdf().set({ margin: 10, filename: `MASS_${currentResult.stock_code}_${currentResult.decision_date}.pdf` }).from(element).save();
+    }
+}
+
+function closeReport() {
+    document.getElementById('reportModal').style.display = 'none';
+}
+
+function saveToPortfolio() {
+    if (!currentResult) { alert('请先进行诊断'); return; }
+    const fd = currentResult.final_decision || {};
+    fetch('/api/agent/positions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            stock_code: currentResult.stock_code,
+            stock_name: currentResult.stock_name,
+            entry_price: currentResult.current_price,
+            shares: 100,
+            position_pct: fd.position_pct || 0.1,
+            target_price: fd.target_price,
+            stop_loss: fd.stop_loss,
+        })
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.success) alert('已加入模拟持仓');
+        else alert('保存失败: ' + (d.error || '未知错误'));
+    });
+}
+
+// ========== Global Tooltip ==========
+const massTooltipEl = document.createElement('div');
+massTooltipEl.id = 'mass-tooltip';
+massTooltipEl.innerHTML = '<div class="mass-tooltip-inner"><div class="mass-tooltip-arrow"></div></div>';
+document.body.appendChild(massTooltipEl);
+
+function showTooltip(targetEl, htmlContent) {
+    const tooltip = document.getElementById('mass-tooltip');
+    if (!tooltip) return;
+    const inner = tooltip.querySelector('.mass-tooltip-inner');
+    inner.innerHTML = '<div class="mass-tooltip-arrow"></div>' + htmlContent;
+
+    const rect = targetEl.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+
+    // Position: above the element, centered horizontally
+    let left = rect.left + rect.width / 2 - 160;
+    let top = rect.top - 12;
+
+    // Boundary checks
+    if (left < 10) left = 10;
+    if (left + 340 > window.innerWidth - 10) left = window.innerWidth - 350;
+    if (top < 10) top = rect.bottom + 12; // flip to below if not enough space above
+
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.classList.add('visible');
+}
+
+function hideTooltip() {
+    const tooltip = document.getElementById('mass-tooltip');
+    if (tooltip) tooltip.classList.remove('visible');
+}
+
+// Enter key support
+document.getElementById('stockInput')?.addEventListener('keypress', e => {
+    if (e.key === 'Enter') startStreamDiagnosis();
+});
+
+// Auto-reconnect: resume active task on page load (cross-page persistence)
+(function() {
+    // Priority 1: Quick-diagnose/predict from history page
+    const quickCode = sessionStorage.getItem('quickDiagnoseCode') || sessionStorage.getItem('quickPredictCode');
+    // Priority 2: Active task reconnection
+    const activeTask = (function() {
+        try { const r = sessionStorage.getItem('mass_active_task'); return r ? JSON.parse(r) : null; } catch(e) { return null; }
+    })();
+
+    if (quickCode) {
+        sessionStorage.removeItem('quickDiagnoseCode');
+        sessionStorage.removeItem('quickPredictCode');
+        const input = document.getElementById('stockInput');
+        if (input) { input.value = quickCode; setTimeout(() => startStreamDiagnosis(), 600); }
+    } else if (activeTask && activeTask.stock_code) {
+        // Reconnect to ongoing task
+        const input = document.getElementById('stockInput');
+        if (input) { input.value = activeTask.stock_code; setTimeout(() => startStreamDiagnosis(activeTask.task_id), 600); }
+    }
+})();
+</script>
+{% endblock %}

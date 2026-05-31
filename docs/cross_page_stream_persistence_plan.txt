@@ -1,0 +1,192 @@
+================================================================================
+MASS v2.3 — 跨页面流式任务持久化方案
+================================================================================
+
+一、问题定义
+────────────────────────────────────────────────────────────────
+
+当前的流式诊断流程:
+  用户点击"实时诊断" → SSE 连接建立 → 后端推送事件 → 前端渲染 Agent 卡片
+  └─ 用户切换到其他页面（历史记录/组合分析/监控等）
+      └─ 页面卸载 → SSE 连接断开 → 前端所有状态丢失
+          └─ 后台任务仍在运行（_DIAGNOSIS_EXECUTOR 线程池），但结果无人接收
+              └─ 用户切回诊断页面 → 空白状态，需要重新诊断
+
+痛点:
+  A. 切出再切回后，6 个 Agent 的流式卡片状态全部消失
+  B. 后台线程仍占用资源计算，但结果被丢弃
+  C. 用户需要重新等待 60-120s，体验极差
+  D. 缓存虽有 TTL=300s，但"进行中"的任务无法被缓存覆盖
+
+二、方案设计
+────────────────────────────────────────────────────────────────
+
+核心思路: 服务端维护"进行中任务"的上下文，客户端保存任务标识，
+         切回时从服务端拉取已缓冲的事件并继续接收新事件。
+
+2.1 服务端: TaskTracker（新增）
+
+  位置: api/agent_bp.py（模块级单例）
+
+  class TaskTracker:
+      """
+      跟踪进行中的诊断/预测任务。
+      客户端断连后再连回，可恢复事件流。
+      """
+      _tasks: Dict[str, _TrackedTask] = {}   # task_id → task
+      _MAX_EVENTS_BUFFER = 200                # 每个任务最多缓存 200 个事件
+
+      def start_task(stock_code, task_type="diagnosis") -> str:
+          """注册新任务，返回 task_id"""
+          task_id = f"{stock_code}_{int(time.time()*1000)}"
+          创建 _TrackedTask(events_queue, buffer=[], status="running", started_at)
+          return task_id
+
+      def get_task(task_id) -> Optional[_TrackedTask]:
+          """获取任务状态，不存在/已完成则返回 None"""
+
+      def push_event(task_id, event):
+          """向任务的事件缓冲推送新事件"""
+          同时存入 buffer（最多 _MAX_EVENTS_BUFFER 个）
+
+      def finish_task(task_id):
+          """标记任务完成，保留 buffer 供客户端拉取"""
+
+  工作流:
+    1. POST /api/agent/diagnose/stream → 创建 task_id → 后台线程开始执行
+    2. 后台线程通过 TaskTracker.push_event() 推送事件到 buffer
+    3. SSE 生成器读取 buffer + 实时事件 → 推送给客户端
+    4. 客户端断连 → 任务继续运行，事件继续推入 buffer
+    5. 客户端重连（带 task_id）→ 生成器先从 buffer 回放已有事件 → 继续接收新事件
+    6. 任务完成 → finish_task() → 保留 buffer（后续再连只读缓存 buffer，不新开任务）
+
+2.2 服务端: SSE 端点增强
+
+  POST /api/agent/diagnose/stream 新增参数:
+  {
+      "stock_code": "000001",
+      "task_id": null          // null=新任务, string=重连已有任务
+  }
+
+  逻辑:
+  if task_id and TaskTracker.get_task(task_id):
+      task = TaskTracker.get_task(task_id)
+      生成器: for event in task.buffered_events → yield
+              然后订阅 task.queue 继续接收实时事件
+  else:
+      创建新 task_id
+      启动后台诊断线程（同现有逻辑）
+      生成器: 实时 yield
+
+  响应头增加:
+  X-Task-ID: <task_id>         // 客户端保存此 ID
+
+2.3 客户端: sessionStorage + 自动重连
+
+  sessionStorage 存储（页面间持久，关闭标签页即清除）:
+  {
+      "mass_active_task": {
+          "task_id": "000001_1716883200123",
+          "stock_code": "000001",
+          "task_type": "diagnosis",
+          "started_at": 1716883200
+      }
+  }
+
+  页面加载时 (agent_trading.html):
+  1. 检查 sessionStorage.getItem("mass_active_task")
+  2. 如果有:
+     a. 自动填入 stock_code 到输入框
+     b. 调用 POST /api/agent/diagnose/stream {"stock_code":"000001", "task_id":"xxx"}
+     c. 服务端返回缓冲事件 + 继续实时推送
+     d. 如果任务已完成 → 直接渲染缓存结果
+     e. 如果任务不存在 → 清除 sessionStorage，静默降级
+  3. 如果没有:
+     显示空白状态（现有行为）
+
+  页面卸载时 (beforeunload):
+  - 不做任何操作（让任务继续运行，sessionStorage 保持）
+
+  任务完成时:
+  - 客户端收到 stage="result" 事件后
+  - 清除 sessionStorage.removeItem("mass_active_task")
+
+2.4 跨页面持久化流程
+
+  ┌─────────────┐    切出     ┌─────────────┐    切回     ┌─────────────┐
+  │ 诊断页面     │ ──────────→ │ 历史记录     │ ──────────→ │ 诊断页面     │
+  │             │             │             │             │             │
+  │ SSE 连接中   │  连接断开    │ (独立页面)   │  sessionStorage│ 读取 task_id │
+  │ Agent 卡片   │  任务继续    │             │  检测到活跃任务│ 重连 SSE    │
+  │ 逐步填充     │  事件入buffer│             │             │ 回放_事件  │
+  │             │             │             │             │ 继续实时    │
+  └─────────────┘             └─────────────┘             └─────────────┘
+        ↓                                                     ↓
+  task_id 存入           后台线程持续运行            TaskTracker.get_task()
+  sessionStorage         事件写入 buffer            返回 buffer + 继续推送
+
+
+三、实施文件清单
+────────────────────────────────────────────────────────────────
+
+  新增:
+    1. api/task_tracker.py          — TaskTracker 类（~80 行）
+
+  修改:
+    2. api/agent_bp.py              — SSE 端点: 支持 task_id 参数 + 回放逻辑
+    3. agent/core/orchestrator.py   — run_diagnosis_background: 接受 task_id 参数
+    4. templates/agent_trading.html — 页面加载时检测 sessionStorage 并自动重连
+    5. static/js/charts/trading-charts.js — startStreamDiagnosis: 支持 task_id
+
+  .env 新增:
+    TASK_TRACKER_MAX_EVENTS=200     — 每个任务最多缓存事件数
+    TASK_TRACKER_TTL=600            — 完成后保留 buffer 秒数
+
+四、API 变更
+────────────────────────────────────────────────────────────────
+
+  POST /api/agent/diagnose/stream
+  Request:  {"stock_code": "000001", "task_id": null}
+  Response: SSE stream
+  Headers:  X-Task-ID: 000001_1716883200123
+
+  GET /api/agent/task/{task_id}
+  Response: {"task_id": "xxx", "status": "running|completed|error",
+              "stock_code": "000001", "events_count": 45,
+              "started_at": "2026-05-27T19:00:00"}
+
+  POST /api/agent/task/{task_id}/cancel
+  Response: {"success": true}
+
+五、前端效果
+────────────────────────────────────────────────────────────────
+
+  场景 1: 诊断中切到历史页，再切回
+    历史页 → 点击"诊断 000001" → 跳转诊断页
+    → 诊断页检测到 sessionStorage 有活跃任务
+    → 自动填入 000001，重连 SSE
+    → 如果任务已完成 → 直接显示完整结果（缓存或新完成）
+    → 如果任务仍在进行 → 回放已有 Agent 卡片，继续接收剩余
+
+  场景 2: 诊断中刷新页面 (F5)
+    → 页面重新加载
+    → sessionStorage 保留（刷新不清除）
+    → 自动重连，恢复之前的状态
+
+  场景 3: 关闭标签页再打开
+    → sessionStorage 清除（标签页关闭即清除）
+    → 没有活跃任务记录
+    → 显示空白状态（正常）
+
+  场景 4: 在历史页点"预测"跳转到诊断页
+    → sessionStorage 只有 predict 标记（quickPredictCode）
+    → 自动填入代码并启动预测流
+
+六、边界处理
+────────────────────────────────────────────────────────────────
+
+  1. task_id 过期: 服务端 TTL 后清理，客户端检测到 404 → 清除 sessionStorage → 降级
+  2. 重复提交: 同一 stock_code 有活跃任务时，返回已有 task_id（不重复创建）
+  3. 并发限制: 同一 session 最多 3 个活跃任务
+  4. 内存控制: buffer 超过 MAX_EVENTS 时丢弃最旧的事件
+  5. 跨 session: 不同用户的任务独立，用 session_id 隔离

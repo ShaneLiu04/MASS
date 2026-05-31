@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+{% block title %}系统监控{% endblock %}
+{% block content %}
+<div class="mass-section">
+    <!-- Top KPI Row -->
+    <div class="mass-grid mass-grid-4" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" style="color:var(--accent-green);"><i class="bi bi-check-circle-fill"></i></div>
+                <div class="mass-metric-label">系统状态: 正常</div>
+                <div class="mass-metric-delta up" id="sysUptime">--</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="kpiTotalDiag" style="color:var(--accent-blue);">--</div>
+                <div class="mass-metric-label">总诊断数</div>
+                <div class="mass-metric-delta up" id="kpiTodayDiag">今日: --</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="kpiCacheHit" style="color:var(--accent-cyan);">--%</div>
+                <div class="mass-metric-label">缓存命中率</div>
+                <div class="mass-metric-delta" id="kpiCacheSize" style="color:var(--text-muted);">大小: --</div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-metric">
+                <div class="mass-metric-value" id="kpiMem" style="color:var(--accent-purple);">--</div>
+                <div class="mass-metric-label">内存占用</div>
+                <div class="mass-metric-delta" id="kpiCpu" style="color:var(--text-muted);">CPU: --%</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 2: Trend + Direction -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-graph-up" style="margin-right:6px;color:var(--accent-blue)"></i>诊断趋势（最近7天）</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="trendChart" class="mass-chart-container" style="height:280px;"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-pie-chart" style="margin-right:6px;color:var(--accent-purple)"></i>决策方向分布</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="directionChart" class="mass-chart-container" style="height:280px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3: Agent Signals + Data Sources -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-bar-chart-line" style="margin-right:6px;color:var(--accent-cyan)"></i>Agent 信号分布</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="agentSignalChart" class="mass-chart-container" style="height:280px;"></div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-hdd-rack" style="margin-right:6px;color:var(--accent-green)"></i>数据源健康状态</div>
+            </div>
+            <div class="mass-card-body">
+                <div id="dataSourceGrid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px;">
+                    <!-- Dynamic -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 4: Recent Requests + Hot Stocks -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-clock-history" style="margin-right:6px;color:var(--accent-yellow)"></i>最近诊断请求</div>
+                <button class="mass-btn mass-btn-ghost" style="padding:4px 10px; font-size:11px;" onclick="loadMonitor()">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+            </div>
+            <div class="mass-card-body" style="padding:0; overflow:auto; max-height:320px;">
+                <table class="mass-table">
+                    <thead>
+                        <tr>
+                            <th>股票</th>
+                            <th>日期</th>
+                            <th>决策</th>
+                            <th>置信度</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recentRequestsBody">
+                        <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-fire" style="margin-right:6px;color:var(--accent-red)"></i>热门股票 Top 10</div>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="hotStockChart" class="mass-chart-container" style="height:280px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 5: System Info + Real-time Logs -->
+    <div class="mass-grid mass-grid-2" style="margin-bottom:24px;">
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-cpu" style="margin-right:6px;color:var(--accent-cyan)"></i>系统信息</div>
+            </div>
+            <div class="mass-card-body">
+                <div id="systemInfoGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:12px; color:var(--text-secondary);">
+                    <!-- Dynamic -->
+                </div>
+            </div>
+        </div>
+        <div class="mass-card">
+            <div class="mass-card-header">
+                <div class="mass-card-title"><i class="bi bi-terminal" style="margin-right:6px;color:var(--accent-cyan)"></i>实时日志</div>
+                <span style="font-size:11px;color:var(--text-muted);" id="logCount">-- 行</span>
+            </div>
+            <div class="mass-card-body" style="padding:0;">
+                <div id="logPanel" style="font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); line-height:1.6; max-height:300px; overflow-y:auto; background:var(--bg-surface); padding:12px; border-radius:var(--radius-sm);"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let trendChart, directionChart, agentSignalChart, hotStockChart;
+let refreshTimer = null;
+
+function initCharts() {
+    trendChart = echarts.init(document.getElementById('trendChart'));
+    directionChart = echarts.init(document.getElementById('directionChart'));
+    agentSignalChart = echarts.init(document.getElementById('agentSignalChart'));
+    hotStockChart = echarts.init(document.getElementById('hotStockChart'));
+}
+
+function loadMonitor() {
+    fetch('/api/agent/stats').then(r => r.json()).then(data => {
+        renderKPIs(data);
+        renderTrendChart(data.diagnose_trend || []);
+        renderDirectionChart(data.direction_distribution || {});
+        renderAgentSignalChart(data.agent_signals || {});
+        renderDataSources(data.data_sources || {});
+        renderRecentRequests(data.requests_history || []);
+        renderHotStockChart(data.hot_stocks || []);
+        renderSystemInfo(data.system || {});
+        renderLogs(data.recent_logs || []);
+    }).catch(err => {
+        console.error('加载监控数据失败:', err);
+    });
+}
+
+function renderKPIs(data) {
+    const db = data.database || {};
+    const cache = data.cache || {};
+    const sys = data.system || {};
+    const trend = data.diagnose_trend || [];
+
+    document.getElementById('kpiTotalDiag').textContent = db.total_decisions || 0;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const todayItem = trend.find(t => t.decision_date === today);
+    document.getElementById('kpiTodayDiag').textContent = '今日: ' + (todayItem ? todayItem.count : 0);
+
+    document.getElementById('kpiCacheHit').textContent = (cache.hit_rate || 0) + '%';
+    document.getElementById('kpiCacheSize').textContent = '大小: ' + (cache.size || 0);
+
+    document.getElementById('kpiMem').textContent = (sys.memory_mb || '--') + ' MB';
+    document.getElementById('kpiCpu').textContent = 'CPU: ' + (sys.cpu_percent || '--') + '%';
+
+    // Uptime
+    if (sys.start_time) {
+        const start = new Date(sys.start_time);
+        const now = new Date();
+        const diff = Math.floor((now - start) / 1000);
+        const h = Math.floor(diff / 3600);
+        const m = Math.floor((diff % 3600) / 60);
+        document.getElementById('sysUptime').textContent = `已运行 ${h}h ${m}m`;
+    }
+}
+
+function renderTrendChart(trend) {
+    const dates = trend.map(t => t.decision_date);
+    const counts = trend.map(t => t.count);
+    const confs = trend.map(t => Math.round((t.avg_confidence || 0) * 100));
+
+    trendChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        legend: { data: ['诊断次数', '平均置信度'], textStyle: { color: '#8b9bb4' }, top: 5 },
+        grid: { left: '8%', right: '8%', top: '18%', bottom: '10%' },
+        xAxis: { type: 'category', data: dates, axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78', fontSize: 10 } },
+        yAxis: [
+            { type: 'value', name: '次数', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+            { type: 'value', name: '置信度%', min: 0, max: 100, axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78', formatter: '{value}%' }, splitLine: { show: false } }
+        ],
+        series: [
+            { name: '诊断次数', type: 'bar', data: counts, itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] }, barWidth: 20 },
+            { name: '平均置信度', type: 'line', yAxisIndex: 1, data: confs, smooth: true, showSymbol: true, symbolSize: 6, lineStyle: { color: '#22c55e', width: 2 }, itemStyle: { color: '#22c55e' } }
+        ]
+    });
+}
+
+function renderDirectionChart(dist) {
+    const sigMap = { '-1': '卖出', '0': '观望', '1': '买入' };
+    const colors = { '-1': '#ef4444', '0': '#eab308', '1': '#22c55e' };
+    const data = Object.entries(dist).map(([k, v]) => ({ name: sigMap[k] || k, value: v }));
+
+    directionChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'item', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { color: '#8b9bb4' } },
+        series: [{
+            type: 'pie', radius: ['40%', '70%'], center: ['40%', '50%'],
+            label: { show: true, color: '#e8ecf4', formatter: '{b}: {c} ({d}%)' },
+            labelLine: { lineStyle: { color: 'rgba(100,130,200,0.3)' } },
+            itemStyle: { borderRadius: 6, borderColor: '#0a0e1a', borderWidth: 2 },
+            data: data.map(d => ({ ...d, itemStyle: { color: colors[d.name === '卖出' ? '-1' : (d.name === '买入' ? '1' : '0')] } }))
+        }]
+    });
+}
+
+function renderAgentSignalChart(agents) {
+    const agentNames = { 'TA-Agent': '技术面', 'FA-Agent': '基本面', 'CA-Agent': '资金面', 'SA-Agent': '情绪面', 'MA-Agent': '宏观', 'RA-Agent': '风险' };
+    const agentColors = { 'TA-Agent': '#06b6d4', 'FA-Agent': '#3b82f6', 'CA-Agent': '#a855f7', 'SA-Agent': '#f97316', 'MA-Agent': '#eab308', 'RA-Agent': '#ef4444' };
+    const sigMap = { '-1': '卖出', '0': '观望', '1': '买入' };
+    const sigColors = { '-1': '#ef4444', '0': '#eab308', '1': '#22c55e' };
+
+    const categories = Object.keys(agents).sort().map(id => agentNames[id] || id);
+    const buyData = [], holdData = [], sellData = [];
+
+    Object.keys(agents).sort().forEach(id => {
+        const s = agents[id].signals || {};
+        buyData.push(s['1'] || 0);
+        holdData.push(s['0'] || 0);
+        sellData.push(s['-1'] || 0);
+    });
+
+    agentSignalChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        legend: { data: ['买入', '观望', '卖出'], textStyle: { color: '#8b9bb4' }, top: 5 },
+        grid: { left: '12%', right: '4%', top: '15%', bottom: '5%' },
+        xAxis: { type: 'value', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        yAxis: { type: 'category', data: categories, axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#8b9bb4' } },
+        series: [
+            { name: '买入', type: 'bar', stack: 'total', data: buyData, itemStyle: { color: '#22c55e', borderRadius: [0, 4, 4, 0] }, barWidth: 18 },
+            { name: '观望', type: 'bar', stack: 'total', data: holdData, itemStyle: { color: '#eab308' }, barWidth: 18 },
+            { name: '卖出', type: 'bar', stack: 'total', data: sellData, itemStyle: { color: '#ef4444', borderRadius: [0, 4, 4, 0] }, barWidth: 18 }
+        ]
+    });
+}
+
+function renderDataSources(sources) {
+    const el = document.getElementById('dataSourceGrid');
+    const names = { 'akshare': 'Akshare', 'eastmoney': '东方财富', 'sina': '新浪财经', 'ths': '同花顺', 'tx': '腾讯财经' };
+    let html = '';
+    for (const [key, info] of Object.entries(sources)) {
+        const healthy = info.healthy;
+        const color = healthy ? 'var(--accent-green)' : 'var(--accent-red)';
+        const icon = healthy ? 'bi-check-circle' : 'bi-x-circle';
+        html += `
+            <div style="display:flex; align-items:center; gap:8px; padding:10px; background:var(--bg-surface); border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <i class="bi ${icon}" style="color:${color}; font-size:16px;"></i>
+                <div>
+                    <div style="font-size:12px; font-weight:600; color:var(--text-primary);">${names[key] || key}</div>
+                    <div style="font-size:10px; color:var(--text-muted);">优先级 ${info.priority || 0}</div>
+                </div>
+            </div>`;
+    }
+    el.innerHTML = html || '<div style="color:var(--text-muted); font-size:12px;">暂无数据源信息</div>';
+}
+
+function renderRecentRequests(requests) {
+    const tbody = document.getElementById('recentRequestsBody');
+    if (!requests.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">暂无诊断记录</td></tr>';
+        return;
+    }
+    const sigMap = { '-1': { text: '卖出', cls: 'mass-signal-sell' }, '0': { text: '观望', cls: 'mass-signal-hold' }, '1': { text: '买入', cls: 'mass-signal-buy' } };
+    tbody.innerHTML = requests.map(r => {
+        const s = sigMap[String(r.decision)] || sigMap['0'];
+        return `<tr>
+            <td><b>${r.stock_name || r.stock_code}</b><br><span style="font-size:10px;color:var(--text-muted);">${r.stock_code}</span></td>
+            <td>${r.decision_date}<br><span style="font-size:10px;color:var(--text-muted);">${r.decision_time}</span></td>
+            <td><span class="mass-signal ${s.cls}" style="font-size:10px; padding:2px 8px;">${s.text}</span></td>
+            <td>${r.confidence ? (r.confidence * 100).toFixed(0) + '%' : '--'}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderHotStockChart(stocks) {
+    const names = stocks.map(s => s.stock_name || s.stock_code);
+    const counts = stocks.map(s => s.count);
+
+    hotStockChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(22,31,58,0.95)', borderColor: 'rgba(100,130,200,0.2)', textStyle: { color: '#e8ecf4' } },
+        grid: { left: '20%', right: '8%', top: '5%', bottom: '5%' },
+        xAxis: { type: 'value', axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#4a5a78' }, splitLine: { lineStyle: { color: 'rgba(100,130,200,0.06)' } } },
+        yAxis: { type: 'category', data: names.slice().reverse(), axisLine: { lineStyle: { color: 'rgba(100,130,200,0.2)' } }, axisLabel: { color: '#8b9bb4', fontSize: 10 } },
+        series: [{
+            type: 'bar', data: counts.slice().reverse(),
+            itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: '#3b82f6' }, { offset: 1, color: '#06b6d4' }]), borderRadius: [0, 4, 4, 0] },
+            barWidth: 16, label: { show: true, position: 'right', color: '#e8ecf4', fontSize: 10 }
+        }]
+    });
+}
+
+function renderSystemInfo(sys) {
+    const el = document.getElementById('systemInfoGrid');
+    const items = [
+        { label: 'Python 版本', value: sys.python_version || '--' },
+        { label: '运行平台', value: sys.platform || '--' },
+        { label: '进程 PID', value: sys.pid || '--' },
+        { label: '工作目录', value: sys.cwd || '--' },
+        { label: '内存占用', value: (sys.memory_mb || '--') + ' MB' },
+        { label: 'CPU 使用率', value: (sys.cpu_percent || '--') + '%' },
+        { label: '启动时间', value: sys.start_time ? sys.start_time.slice(0, 19).replace('T', ' ') : '--' },
+        { label: 'MASS 版本', value: 'v2.1.0' },
+    ];
+    el.innerHTML = items.map(item => `
+        <div style="padding:8px 12px; background:var(--bg-surface); border-radius:var(--radius-sm);">
+            <div style="font-size:10px; color:var(--text-muted); margin-bottom:2px;">${item.label}</div>
+            <div style="font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.value}</div>
+        </div>
+    `).join('');
+}
+
+function renderLogs(logs) {
+    const el = document.getElementById('logPanel');
+    document.getElementById('logCount').textContent = logs.length + ' 行';
+    if (!logs.length) {
+        el.innerHTML = '<div style="color:var(--text-muted);">暂无日志</div>';
+        return;
+    }
+    // Color-code log levels
+    const colored = logs.map(line => {
+        let color = 'var(--text-secondary)';
+        if (line.includes('| ERROR ')) color = 'var(--accent-red)';
+        else if (line.includes('| WARNING ')) color = 'var(--accent-yellow)';
+        else if (line.includes('| SUCCESS ')) color = 'var(--accent-green)';
+        else if (line.includes('| INFO ')) color = '#3b82f6';
+        return `<div style="color:${color}; white-space:pre-wrap; word-break:break-all; margin-bottom:2px;">${escapeHtml(line)}</div>`;
+    }).join('');
+    el.innerHTML = colored;
+    el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Auto refresh every 10 seconds
+function startAutoRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(loadMonitor, 10000);
+}
+
+window.addEventListener('resize', () => {
+    trendChart?.resize();
+    directionChart?.resize();
+    agentSignalChart?.resize();
+    hotStockChart?.resize();
+});
+
+// Init
+initCharts();
+loadMonitor();
+startAutoRefresh();
+</script>
+{% endblock %}

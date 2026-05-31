@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}MASS{% endblock %} - 多智能体股票投研系统</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/mass-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/mass-theme.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2.1.0/dist/echarts-wordcloud.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="mass-navbar">
+        <div class="mass-navbar-inner">
+            <a href="/" class="mass-logo">
+                <img src="{{ url_for('static', filename='img/mass-logo.svg') }}" alt="MASS Logo" style="width:40px; height:40px; flex-shrink:0;">
+                <div>
+                    <div class="mass-logo-text">MASS</div>
+                    <div class="mass-logo-sub">Multi-Agent Stock System</div>
+                </div>
+            </a>
+            <div class="mass-nav-links">
+                <a href="/agent/trading" class="mass-nav-link {% if request.endpoint == 'agent_trading' %}active{% endif %}">
+                    <i class="bi bi-graph-up-arrow" style="margin-right:4px"></i> 个股诊断
+                </a>
+                <a href="/agent/portfolio" class="mass-nav-link {% if request.endpoint == 'agent_portfolio' %}active{% endif %}">
+                    <i class="bi bi-briefcase" style="margin-right:4px"></i> 组合分析
+                </a>
+                <a href="/agent/backtest" class="mass-nav-link {% if request.endpoint == 'agent_backtest' %}active{% endif %}">
+                    <i class="bi bi-bar-chart-line" style="margin-right:4px"></i> 量化回测
+                </a>
+                <a href="/agent/history" class="mass-nav-link {% if request.endpoint == 'agent_history' %}active{% endif %}">
+                    <i class="bi bi-clock-history" style="margin-right:4px"></i> 历史记录
+                </a>
+                <a href="/agent/monitor" class="mass-nav-link {% if request.endpoint == 'agent_monitor' %}active{% endif %}">
+                    <i class="bi bi-cpu" style="margin-right:4px"></i> 系统监控
+                </a>
+                <a href="/agent/report" class="mass-nav-link {% if request.endpoint == 'agent_report' %}active{% endif %}">
+                    <i class="bi bi-file-earmark-text" style="margin-right:4px"></i> 研报生成
+                </a>
+                <a href="/settings" class="mass-nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">
+                    <i class="bi bi-gear" style="margin-right:4px"></i> 设置
+                </a>
+            </div>
+            <div class="mass-ticker" id="marketTicker">
+                <span class="mass-ticker-item"><span class="mass-ticker-name">上证指数</span> <span class="mass-ticker-value">--</span></span>
+                <span style="color:var(--border-medium)">|</span>
+                <span class="mass-ticker-item"><span class="mass-ticker-name">创业板指</span> <span class="mass-ticker-value">--</span></span>
+                <span style="color:var(--border-medium)">|</span>
+                <span class="mass-ticker-item"><span class="mass-ticker-name">沪深300</span> <span class="mass-ticker-value">--</span></span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="mass-container" style="padding-top:24px; padding-bottom:48px;">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="mass-footer">
+        <p>免责声明：本系统所有Agent输出仅供参考，不构成投资建议。股市有风险，投资需谨慎。</p>
+        <p style="margin-top:4px;">MASS v2.0 | 多智能体协同股票投研与决策系统</p>
+    </footer>
+
+    <script>
+    // Real-time market ticker
+    (function() {
+        const tickerEl = document.getElementById('marketTicker');
+        const indexNames = {'上证指数': 'sh', '创业板指': 'cy', '沪深300': 'hs300'};
+
+        function formatIndex(name, data) {
+            if (!data) return `<span class="mass-ticker-item"><span class="mass-ticker-name">${name}</span> <span class="mass-ticker-value">--</span></span>`;
+            const pct = (data.pct_change * 100).toFixed(2);
+            const colorCls = pct >= 0 ? 'mass-ticker-up' : 'mass-ticker-down';
+            const sign = pct >= 0 ? '+' : '';
+            return `<span class="mass-ticker-item"><span class="mass-ticker-name">${name}</span> <span class="mass-ticker-value ${colorCls}">${sign}${pct}%</span></span>`;
+        }
+
+        async function updateTicker() {
+            try {
+                const resp = await fetch('/api/market/indices');
+                const json = await resp.json();
+                if (json.code === 'OK' && json.data) {
+                    const items = [];
+                    ['上证指数', '创业板指', '沪深300'].forEach((name, i) => {
+                        items.push(formatIndex(name, json.data[name]));
+                        if (i < 2) items.push('<span style="color:var(--border-medium)">|</span>');
+                    });
+                    tickerEl.innerHTML = items.join('');
+                }
+            } catch (e) {
+                // silent fail, keep last values
+            }
+        }
+
+        updateTicker();
+        setInterval(updateTicker, 15000);
+    })();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统设置 - MASS</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/mass-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/mass-theme.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css">
+    <style>
+        .settings-page { min-height: 100vh; background: var(--bg-base); }
+        .settings-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 16px 32px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-medium);
+            position: sticky; top: 0; z-index: 100;
+        }
+        .settings-header-left { display: flex; align-items: center; gap: 12px; }
+        .settings-header-title { font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); }
+        .back-btn {
+            padding: 6px 14px; background: transparent; border: 1px solid var(--border-medium);
+            border-radius: var(--radius-md); color: var(--text-muted); font-size: var(--font-size-sm);
+            cursor: pointer; transition: all var(--transition-fast); text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+            position: relative; z-index: 101;
+        }
+        .back-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+        .settings-main { padding: 32px; max-width: 800px; margin: 0 auto; }
+
+        .settings-section {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-xl);
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+        .settings-section h3 {
+            font-size: var(--font-size-lg); color: var(--text-primary);
+            margin: 0 0 20px; font-weight: 600;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .settings-section h3 i { color: var(--accent-blue); }
+
+        .form-row {
+            margin-bottom: 20px;
+        }
+        .form-row label {
+            display: block;
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .form-row label .required {
+            color: var(--accent-red); margin-left: 2px;
+        }
+        .form-input, .form-select {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: var(--font-size-base);
+            font-family: var(--font-sans);
+            transition: border-color var(--transition-fast);
+            box-sizing: border-box;
+        }
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        .form-input::placeholder { color: var(--text-muted); }
+        .form-hint {
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .form-row-inline {
+            display: flex; gap: 16px;
+        }
+        .form-row-inline .form-row { flex: 1; }
+
+        .toggle-switch,
+        .form-row label.toggle-switch {
+            display: flex; align-items: center; gap: 12px;
+            cursor: pointer;
+            margin-bottom: 0;
+        }
+        .toggle-switch input { display: none; }
+        .toggle-slider {
+            width: 44px; height: 24px;
+            background: var(--border-medium);
+            border-radius: 12px;
+            position: relative;
+            transition: background var(--transition-fast);
+            flex-shrink: 0;
+        }
+        .toggle-slider::after {
+            content: ''; position: absolute;
+            width: 18px; height: 18px; border-radius: 50%;
+            background: white;
+            top: 3px; left: 3px;
+            transition: transform var(--transition-fast);
+        }
+        .toggle-switch input:checked + .toggle-slider { background: var(--accent-green); }
+        .toggle-switch input:checked + .toggle-slider::after { transform: translateX(20px); }
+        .toggle-label {
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            flex: 1;
+            line-height: 1.5;
+        }
+
+        .btn-group {
+            display: flex; gap: 12px; margin-top: 8px;
+        }
+        .btn-primary {
+            padding: 10px 24px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            border: none; border-radius: var(--radius-md);
+            color: white; font-size: var(--font-size-base); font-weight: 500;
+            cursor: pointer; transition: all var(--transition-fast);
+        }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-secondary {
+            padding: 10px 24px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-medium); border-radius: var(--radius-md);
+            color: var(--text-secondary); font-size: var(--font-size-base);
+            cursor: pointer; transition: all var(--transition-fast);
+        }
+        .btn-secondary:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+        .status-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 12px; border-radius: var(--radius-sm);
+            font-size: var(--font-size-xs); font-weight: 500;
+        }
+        .status-ok { background: rgba(34,197,94,0.15); color: var(--accent-green); }
+        .status-warn { background: rgba(245,158,11,0.15); color: var(--accent-yellow); }
+        .status-error { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+
+        .toast {
+            position: fixed; top: 20px; right: 20px;
+            padding: 14px 20px; border-radius: var(--radius-lg);
+            color: white; font-size: var(--font-size-sm);
+            z-index: 1000; opacity: 0; transform: translateY(-10px);
+            transition: all 0.3s ease;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast-success { background: var(--accent-green); }
+        .toast-error { background: var(--accent-red); }
+
+        @media (max-width: 768px) {
+            .settings-main { padding: 20px; }
+            .settings-header { padding: 12px 16px; }
+            .form-row-inline { flex-direction: column; gap: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="settings-page">
+        <!-- Header -->
+        <div class="settings-header">
+            <div class="settings-header-left">
+                <img src="{{ url_for('static', filename='img/mass-logo.svg') }}" alt="MASS" style="width:36px; height:36px;">
+                <span class="settings-header-title">系统设置</span>
+            </div>
+            <a href="/dashboard" class="back-btn" onclick="window.location.href='/dashboard'; return false;">
+                <i class="bi bi-arrow-left"></i> 返回工作台
+            </a>
+        </div>
+
+        <!-- Main -->
+        <div class="settings-main">
+            <!-- LLM 配置 -->
+            <div class="settings-section">
+                <h3><i class="bi bi-cpu"></i> LLM 模型配置</h3>
+
+                <div class="form-row">
+                    <label>当前状态</label>
+                    <div id="llmStatus">
+                        <span class="status-badge status-warn"><i class="bi bi-exclamation-triangle"></i> 加载中...</span>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="useMock" onchange="toggleMockMode()">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">使用 Mock LLM 模式（无需 API 密钥，仅供测试）</span>
+                    </label>
+                </div>
+
+                <div id="realConfigPanel">
+                    <div class="form-row">
+                        <label>提供商 <span class="required">*</span></label>
+                        <select class="form-select" id="provider" onchange="onProviderChange()">
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="claude">Claude (Anthropic)</option>
+                            <option value="ollama">Ollama (本地)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <label>API Key <span class="required" id="apiKeyRequired">*</span></label>
+                        <input type="password" class="form-input" id="apiKey" placeholder="输入 API Key">
+                        <div class="form-hint" id="apiKeyHint">留空则保留当前配置。首次配置必须填写。</div>
+                    </div>
+
+                    <div class="form-row">
+                        <label>Base URL</label>
+                        <input type="text" class="form-input" id="baseUrl" placeholder="https://api.deepseek.com/v1">
+                        <div class="form-hint">大多数情况使用默认值即可</div>
+                    </div>
+
+                    <div class="form-row">
+                        <label>模型名称</label>
+                        <input type="text" class="form-input" id="model" placeholder="deepseek-v4-pro">
+                    </div>
+
+                    <div class="form-row-inline">
+                        <div class="form-row">
+                            <label>Temperature</label>
+                            <input type="number" class="form-input" id="temperature" min="0" max="2" step="0.1" value="0.2">
+                        </div>
+                        <div class="form-row">
+                            <label>Top P</label>
+                            <input type="number" class="form-input" id="topP" min="0" max="1" step="0.1" value="1.0">
+                        </div>
+                    </div>
+
+                    <div class="form-row-inline">
+                        <div class="form-row">
+                            <label>Max Tokens</label>
+                            <input type="number" class="form-input" id="maxTokens" min="100" max="16000" step="100" value="4096">
+                        </div>
+                        <div class="form-row">
+                            <label>Timeout (秒)</label>
+                            <input type="number" class="form-input" id="timeout" min="5" max="300" step="5" value="60">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn-primary" id="saveBtn" onclick="saveSettings()">
+                        <i class="bi bi-check-lg"></i> 保存配置
+                    </button>
+                    <button class="btn-secondary" id="testBtn" onclick="testConnection()">
+                        <i class="bi bi-lightning"></i> 测试连接
+                    </button>
+                </div>
+            </div>
+
+            <!-- 安全提示 -->
+            <div class="settings-section">
+                <h3><i class="bi bi-shield-check"></i> 安全说明</h3>
+                <div style="font-size:var(--font-size-sm); color:var(--text-secondary); line-height:1.8;">
+                    <p><i class="bi bi-check-circle" style="color:var(--accent-green); margin-right:6px;"></i>API Key 仅存储在本地 SQLite 数据库中，不会上传至任何外部服务器。</p>
+                    <p><i class="bi bi-check-circle" style="color:var(--accent-green); margin-right:6px;"></i>前端展示时 API Key 会自动脱敏（如 <code>sk-ab****ef12</code>）。</p>
+                    <p><i class="bi bi-check-circle" style="color:var(--accent-green); margin-right:6px;"></i>建议在 .env 文件中配置环境变量作为初始值，Web 配置将覆盖环境变量。</p>
+                    <p><i class="bi bi-exclamation-triangle" style="color:var(--accent-yellow); margin-right:6px;"></i>请勿将数据库文件（<code>data/mass.db</code>）提交至版本控制。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // 默认配置模板
+    const PROVIDER_DEFAULTS = {
+        deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
+        openai:   { baseUrl: 'https://api.openai.com/v1',    model: 'gpt-4o' },
+        claude:   { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-20241022' },
+        ollama:   { baseUrl: 'http://localhost:11434',       model: 'llama3' },
+    };
+
+    let currentConfig = {};
+
+    async function loadSettings() {
+        try {
+            const resp = await fetch('/api/agent/settings');
+            const json = await resp.json();
+            if (json.code === 'OK') {
+                currentConfig = json.data;
+                fillForm(currentConfig);
+                updateStatus(currentConfig);
+            }
+        } catch (e) {
+            showToast('加载配置失败: ' + e.message, 'error');
+        }
+    }
+
+    function fillForm(cfg) {
+        document.getElementById('useMock').checked = cfg.use_mock;
+        document.getElementById('provider').value = cfg.provider || 'deepseek';
+        const apiKeyInput = document.getElementById('apiKey');
+        if (cfg.api_key) {
+            apiKeyInput.value = '';
+            apiKeyInput.placeholder = cfg.api_key;
+        } else {
+            apiKeyInput.value = '';
+            apiKeyInput.placeholder = '输入 API Key';
+        }
+        document.getElementById('baseUrl').value = cfg.base_url || '';
+        document.getElementById('model').value = cfg.model || '';
+        document.getElementById('temperature').value = cfg.temperature ?? 0.2;
+        document.getElementById('topP').value = cfg.top_p ?? 1.0;
+        document.getElementById('maxTokens').value = cfg.max_tokens ?? 4096;
+        document.getElementById('timeout').value = cfg.timeout ?? 60;
+        toggleMockMode();
+    }
+
+    function updateStatus(cfg) {
+        const el = document.getElementById('llmStatus');
+        if (cfg.use_mock) {
+            el.innerHTML = '<span class="status-badge status-warn"><i class="bi bi-moon-stars"></i> Mock 模式 — 使用模拟数据</span>';
+        } else if (cfg.has_api_key) {
+            el.innerHTML = '<span class="status-badge status-ok"><i class="bi bi-check-circle"></i> 真实 LLM 已配置 (' + cfg.provider + ')</span>';
+        } else {
+            el.innerHTML = '<span class="status-badge status-error"><i class="bi bi-x-circle"></i> 未配置 API Key，诊断将不可用</span>';
+        }
+    }
+
+    function toggleMockMode() {
+        const useMock = document.getElementById('useMock').checked;
+        const panel = document.getElementById('realConfigPanel');
+        const req = document.getElementById('apiKeyRequired');
+        panel.style.opacity = useMock ? '0.5' : '1';
+        panel.style.pointerEvents = useMock ? 'none' : 'auto';
+        req.style.display = useMock ? 'none' : 'inline';
+    }
+
+    function onProviderChange() {
+        const provider = document.getElementById('provider').value;
+        const defaults = PROVIDER_DEFAULTS[provider];
+        if (defaults) {
+            const baseUrlInput = document.getElementById('baseUrl');
+            const modelInput = document.getElementById('model');
+            if (!baseUrlInput.value || confirm('是否覆盖为 ' + provider + ' 的默认配置？')) {
+                baseUrlInput.value = defaults.baseUrl;
+                modelInput.value = defaults.model;
+            }
+        }
+    }
+
+    function gatherFormData() {
+        return {
+            provider: document.getElementById('provider').value,
+            api_key: document.getElementById('apiKey').value.trim(),
+            base_url: document.getElementById('baseUrl').value.trim(),
+            model: document.getElementById('model').value.trim(),
+            temperature: parseFloat(document.getElementById('temperature').value),
+            top_p: parseFloat(document.getElementById('topP').value),
+            max_tokens: parseInt(document.getElementById('maxTokens').value),
+            timeout: parseInt(document.getElementById('timeout').value),
+            use_mock: document.getElementById('useMock').checked,
+        };
+    }
+
+    async function saveSettings() {
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 保存中...';
+
+        try {
+            const resp = await fetch('/api/agent/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(gatherFormData()),
+            });
+            const json = await resp.json();
+
+            if (json.code === 'OK') {
+                showToast('配置已保存', 'success');
+                currentConfig = json.data;
+                fillForm(currentConfig);
+                updateStatus(currentConfig);
+            } else {
+                showToast(json.error || '保存失败', 'error');
+            }
+        } catch (e) {
+            showToast('保存失败: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-lg"></i> 保存配置';
+        }
+    }
+
+    async function testConnection() {
+        const btn = document.getElementById('testBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 测试中...';
+
+        try {
+            const resp = await fetch('/api/agent/settings/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(gatherFormData()),
+            });
+            const json = await resp.json();
+
+            if (json.success) {
+                showToast('连接测试成功！', 'success');
+            } else {
+                showToast(json.message || '连接测试失败', 'error');
+            }
+        } catch (e) {
+            showToast('测试失败: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-lightning"></i> 测试连接';
+        }
+    }
+
+    function showToast(message, type) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast toast-' + type + ' show';
+        setTimeout(() => { toast.classList.remove('show'); }, 3000);
+    }
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', loadSettings);
+    </script>
+</body>
+</html>
